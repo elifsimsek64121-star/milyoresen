@@ -1,0 +1,39 @@
+name: five_million_quiz  # Paket adı (Flutter için, küçük harf ve alt çizgi)
+description: "milyonersen bilgi yarışması zeka oyunu"
+publish_to: 'none'
+
+version: 1.0.0+12
+
+environment:
+  sdk: ">=3.9.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  font_awesome_flutter: ^10.4.0
+  flutter_svg: ^2.1.1
+  cupertino_icons: ^1.0.8
+  google_mobile_ads: ^5.0.0
+  audioplayers: ^6.5.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  flutter_launcher_icons: ^0.14.4
+
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/app_icon.png"
+  remove_alpha_ios: true
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/questions.json
+    - assets/app_icon.png
+    - assets/background.jpg
+    - assets/sounds/correct.mp3
+    - assets/sounds/wrong.mp3
+    - assets/sounds/timer.mp3
