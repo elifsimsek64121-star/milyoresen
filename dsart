@@ -1,0 +1,3643 @@
+import 'dart:convert';
+import 'dart:math';
+import 'dart:ui';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:audioplayers/audioplayers.dart';
+
+// ═══════════════════════════════════════════════════════════════════
+//  MAIN
+// ═══════════════════════════════════════════════════════════════════
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.black,
+    ),
+  );
+  MobileAds.instance.initialize().catchError((e) => debugPrint('AdMob: $e'));
+  runApp(const MilyonerApp());
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DESIGN TOKENS  ──  "Black Gold" premium palette
+// ═══════════════════════════════════════════════════════════════════
+class K {
+  // Backgrounds
+  static const ink = Color(0xFF020408);
+  static const inkDeep = Color(0xFF010205);
+  static const navy = Color(0xFF04091C);
+  static const panel = Color(0xFF080E28);
+  static const panelMid = Color(0xFF0C1535);
+  static const panelLight = Color(0xFF111D45);
+
+  // Gold spectrum
+  static const gold0 = Color(0xFFFFFDE7); // cream
+  static const gold1 = Color(0xFFFFEE58); // light
+  static const gold2 = Color(0xFFFFD700); // pure gold
+  static const gold3 = Color(0xFFFFB300); // amber
+  static const gold4 = Color(0xFF8D6E00); // deep
+  static const goldShadow = Color(0x80FFD700);
+
+  // Neon accents
+  static const cyan = Color(0xFF00E5FF);
+  static const cyanDeep = Color(0xFF006064);
+  static const blue = Color(0xFF2979FF);
+  static const violet = Color(0xFFD500F9);
+
+  // State colors
+  static const correct = Color(0xFF00E676);
+  static const correctBg = Color(0xFF00251A);
+  static const wrong = Color(0xFFFF1744);
+  static const wrongBg = Color(0xFF1A0010);
+  static const select = Color(0xFFFF8F00);
+  static const selectBg = Color(0xFF1A0E00);
+  static const locked = Color(0xFFAA00FF);
+
+  // Text
+  static const w100 = Color(0xFFFFFFFF);
+  static const w80 = Color(0xCCFFFFFF);
+  static const w60 = Color(0x99FFFFFF);
+  static const w40 = Color(0x66FFFFFF);
+  static const w20 = Color(0x33FFFFFF);
+  static const w10 = Color(0x1AFFFFFF);
+  static const w05 = Color(0x0DFFFFFF);
+
+  // Level colors  [color, glow]
+  static const lvlColors = [
+    [Color(0xFF00E676), Color(0xFF69F0AE)], // L1 green
+    [Color(0xFFFFD700), Color(0xFFFFEE58)], // L2 gold
+    [Color(0xFFFF1744), Color(0xFFFF6D75)], // L3 red
+  ];
+
+  // Option colors per slot  A B C D
+  static const optA = Color(0xFF2979FF);
+  static const optB = Color(0xFFD500F9);
+  static const optC = Color(0xFF00E676);
+  static const optD = Color(0xFFFF6D00);
+  static List<Color> opts = [optA, optB, optC, optD];
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  LEVEL CONFIG
+// ═══════════════════════════════════════════════════════════════════
+class Level {
+  final String name;
+  final List<String> prizes;
+  final List<int> checkpoints;
+  final int count;
+  final Color color, glow;
+
+  const Level(
+    this.name,
+    this.prizes,
+    this.checkpoints,
+    this.count,
+    this.color,
+    this.glow,
+  );
+
+  static const all = [
+    Level(
+      "BÖLÜM I",
+      ["500 TL", "1.000 TL", "2.000 TL", "3.000 TL", "5.000 TL", "7.500 TL"],
+      [1, 4],
+      6,
+      Color(0xFF00E676),
+      Color(0xFF69F0AE),
+    ),
+    Level(
+      "BÖLÜM II",
+      ["10.000 TL", "15.000 TL", "20.000 TL", "30.000 TL", "50.000 TL"],
+      [0, 3],
+      5,
+      Color(0xFFFFD700),
+      Color(0xFFFFEE58),
+    ),
+    Level(
+      "BÖLÜM III",
+      [
+        "100.000 TL",
+        "200.000 TL",
+        "400.000 TL",
+        "1.000.000 TL",
+        "5.000.000 TL",
+      ],
+      [0, 3],
+      5,
+      Color(0xFFFF1744),
+      Color(0xFFFF6D75),
+    ),
+  ];
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ADS
+// ═══════════════════════════════════════════════════════════════════
+class Ads {
+  static const banner = 'ca-app-pub-3940256099942544/6300978111';
+  static const rewarded = 'ca-app-pub-3940256099942544/1033173712';
+  static const interstitial = 'ca-app-pub-3940256099942544/5224354917';
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PAINTERS
+// ═══════════════════════════════════════════════════════════════════
+
+/// Radial spotlight beams from top center
+class BeamPainter extends CustomPainter {
+  final Color color;
+  final double intensity;
+  const BeamPainter(this.color, this.intensity);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2;
+    for (int i = 0; i < 16; i++) {
+      final angle = (i / 16) * 2 * pi - pi / 2;
+      final p = Paint()
+        ..shader = RadialGradient(
+          colors: [color.withOpacity(0.10 * intensity), Colors.transparent],
+        ).createShader(Rect.fromLTWH(0, 0, size.width, size.height * 1.6))
+        ..style = PaintingStyle.fill;
+      final path = Path()
+        ..moveTo(cx, -40)
+        ..lineTo(
+          cx + cos(angle - 0.05) * size.height * 1.8,
+          sin(angle - 0.05) * size.height * 1.8,
+        )
+        ..lineTo(
+          cx + cos(angle + 0.05) * size.height * 1.8,
+          sin(angle + 0.05) * size.height * 1.8,
+        )
+        ..close();
+      canvas.drawPath(path, p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(BeamPainter o) =>
+      o.color != color || o.intensity != intensity;
+}
+
+/// Diagonal scan line texture
+class ScanlinePainter extends CustomPainter {
+  final double opacity;
+  const ScanlinePainter(this.opacity);
+  @override
+  void paint(Canvas canvas, Size size) {
+    final p = Paint()
+      ..color = Colors.black.withOpacity(opacity * 0.18)
+      ..strokeWidth = 1;
+    for (double y = 0; y < size.height; y += 3) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(ScanlinePainter o) => o.opacity != opacity;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  REUSABLE WIDGETS
+// ═══════════════════════════════════════════════════════════════════
+
+/// Animated gold coin with TL symbol
+class GoldCoin extends StatefulWidget {
+  final double size;
+  final Duration delay;
+  const GoldCoin({super.key, this.size = 28, this.delay = Duration.zero});
+  @override
+  State<GoldCoin> createState() => _GoldCoinState();
+}
+
+class _GoldCoinState extends State<GoldCoin>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1600),
+  )..repeat(reverse: true);
+  late final Animation<double> _rot = Tween(
+    begin: -0.05,
+    end: 0.05,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut));
+  late final Animation<double> _float = Tween(
+    begin: 0.0,
+    end: 6.0,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut));
+  late final Animation<double> _shine = Tween(
+    begin: 0.6,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut));
+
+  @override
+  void initState() {
+    super.initState();
+    Future.delayed(widget.delay, () {
+      if (mounted) _c.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _c,
+    builder: (_, __) => Transform.translate(
+      offset: Offset(0, -_float.value),
+      child: Transform.rotate(
+        angle: _rot.value,
+        child: Container(
+          width: widget.size,
+          height: widget.size,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: RadialGradient(
+              center: const Alignment(-0.3, -0.4),
+              radius: 0.75,
+              colors: [
+                Color.lerp(K.gold0, K.gold1, _shine.value)!,
+                K.gold2,
+                K.gold3,
+                K.gold4,
+              ],
+              stops: const [0.0, 0.3, 0.65, 1.0],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: K.gold2.withOpacity(0.7 * _shine.value),
+                blurRadius: widget.size * 0.8,
+                spreadRadius: widget.size * 0.1,
+              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '₺',
+            style: TextStyle(
+              fontSize: widget.size * 0.44,
+              fontWeight: FontWeight.w900,
+              color: K.gold4.withOpacity(0.9),
+              height: 1,
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+/// Neon-glow bordered box with glassmorphism
+class GlassBox extends StatelessWidget {
+  final Widget child;
+  final Color borderColor;
+  final double radius;
+  final double blur;
+  final EdgeInsetsGeometry? padding;
+  final Color? bgOverride;
+  final double borderWidth;
+
+  const GlassBox({
+    super.key,
+    required this.child,
+    required this.borderColor,
+    this.radius = 18,
+    this.blur = 16,
+    this.padding,
+    this.bgOverride,
+    this.borderWidth = 1.4,
+  });
+
+  @override
+  Widget build(BuildContext context) => ClipRRect(
+    borderRadius: BorderRadius.circular(radius),
+    child: BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(radius),
+          color: bgOverride ?? K.panel.withOpacity(0.72),
+          border: Border.all(
+            color: borderColor.withOpacity(0.65),
+            width: borderWidth,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: borderColor.withOpacity(0.3),
+              blurRadius: blur * 1.2,
+              spreadRadius: 1,
+            ),
+            BoxShadow(
+              color: borderColor.withOpacity(0.12),
+              blurRadius: blur * 3,
+            ),
+          ],
+        ),
+        child: child,
+      ),
+    ),
+  );
+}
+
+/// Pulsing glow dot indicator
+class Dot extends StatefulWidget {
+  final Color color;
+  final double size;
+  const Dot({super.key, required this.color, this.size = 7});
+  @override
+  State<Dot> createState() => _DotState();
+}
+
+class _DotState extends State<Dot> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+  late final Animation<double> _a = CurvedAnimation(
+    parent: _c,
+    curve: Curves.easeInOut,
+  );
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _a,
+    builder: (_, __) => Container(
+      width: widget.size,
+      height: widget.size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: widget.color,
+        boxShadow: [
+          BoxShadow(
+            color: widget.color.withOpacity(_a.value * 0.9),
+            blurRadius: widget.size * 2.5 * _a.value,
+            spreadRadius: widget.size * 0.5 * _a.value,
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Gold gradient text
+class GoldText extends StatelessWidget {
+  final String text;
+  final TextStyle style;
+  const GoldText(this.text, {super.key, required this.style});
+  @override
+  Widget build(BuildContext context) => ShaderMask(
+    shaderCallback: (b) => const LinearGradient(
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+      colors: [K.gold0, K.gold1, K.gold2, K.gold3],
+      stops: [0.0, 0.25, 0.6, 1.0],
+    ).createShader(b),
+    child: Text(text, style: style.copyWith(color: Colors.white)),
+  );
+}
+
+// ─── Prize display chip ───
+class PrizeChip extends StatelessWidget {
+  final String amount;
+  final bool large;
+  const PrizeChip(this.amount, {super.key, this.large = false});
+
+  @override
+  Widget build(BuildContext context) {
+    // Parse to format nicely with coin prefix
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: large ? 22 : 16,
+          height: large ? 22 : 16,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: const RadialGradient(
+              center: Alignment(-0.3, -0.3),
+              colors: [K.gold1, K.gold2, K.gold4],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: K.gold2.withOpacity(0.6),
+                blurRadius: large ? 12 : 8,
+              ),
+            ],
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '₺',
+            style: TextStyle(
+              fontSize: large ? 12 : 9,
+              fontWeight: FontWeight.w900,
+              color: K.gold4,
+              height: 1,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Text(
+          amount,
+          style: TextStyle(
+            fontSize: large ? 26 : 18,
+            fontWeight: FontWeight.w900,
+            color: K.gold2,
+            letterSpacing: large ? 1 : 0.5,
+            shadows: [Shadow(color: K.gold2.withOpacity(0.5), blurRadius: 12)],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  APP ROOT
+// ═══════════════════════════════════════════════════════════════════
+class MilyonerApp extends StatelessWidget {
+  const MilyonerApp({super.key});
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: '5 Milyonluk Soru Yarışı',
+    debugShowCheckedModeBanner: false,
+    theme: ThemeData(
+      brightness: Brightness.dark,
+      scaffoldBackgroundColor: K.ink,
+      fontFamily: 'Roboto',
+      useMaterial3: true,
+    ),
+    home: const SplashScreen(),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  SPLASH SCREEN
+// ═══════════════════════════════════════════════════════════════════
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+  @override
+  State<SplashScreen> createState() => _SplashState();
+}
+
+class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
+  late final AnimationController _master = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 3000),
+  )..forward();
+  late final AnimationController _ambient = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 3000),
+  )..repeat(reverse: true);
+
+  late final Animation<double> _bgIn = _interval(0.0, 0.25);
+  late final Animation<double> _logoIn = _interval(
+    0.15,
+    0.55,
+    curve: Curves.elasticOut,
+  );
+  late final Animation<double> _titleIn = _interval(
+    0.45,
+    0.72,
+    curve: Curves.easeOutCubic,
+  );
+  late final Animation<double> _subIn = _interval(0.60, 0.80);
+  late final Animation<double> _btnsIn = _interval(0.75, 1.0);
+
+  Animation<double> _interval(
+    double b,
+    double e, {
+    Curve curve = Curves.easeOut,
+  }) => Tween(begin: 0.0, end: 1.0).animate(
+    CurvedAnimation(
+      parent: _master,
+      curve: Interval(b, e, curve: curve),
+    ),
+  );
+
+  late final Animation<double> _glow = Tween(
+    begin: 0.6,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _ambient, curve: Curves.easeInOut));
+  late final Animation<double> _beamRot = Tween(
+    begin: 0.0,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _ambient, curve: Curves.easeInOut));
+
+  @override
+  void dispose() {
+    _master.dispose();
+    _ambient.dispose();
+    super.dispose();
+  }
+
+  void _goToGame() => Navigator.pushReplacement(
+    context,
+    PageRouteBuilder(
+      transitionDuration: const Duration(milliseconds: 1000),
+      pageBuilder: (_, __, ___) => const GameScreen(),
+      transitionsBuilder: (_, a, __, child) {
+        final c = CurvedAnimation(parent: a, curve: Curves.easeInOutCubic);
+        return FadeTransition(
+          opacity: c,
+          child: ScaleTransition(
+            scale: Tween(begin: 1.06, end: 1.0).animate(c),
+            child: child,
+          ),
+        );
+      },
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final sz = MediaQuery.of(context).size;
+    return Scaffold(
+      body: AnimatedBuilder(
+        animation: Listenable.merge([_master, _ambient]),
+        builder: (_, __) => Stack(
+          children: [
+            // ── Background image ──
+            Positioned.fill(
+              child: Opacity(
+                opacity: _bgIn.value,
+                child: Image.asset(
+                  'assets/background.jpg',
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => Container(color: K.ink),
+                ),
+              ),
+            ),
+
+            // ── Dark overlay on bg ──
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0xCC010205),
+                      Color(0xB3020408),
+                      Color(0xF0010205),
+                    ],
+                    stops: [0.0, 0.45, 1.0],
+                  ),
+                ),
+              ),
+            ),
+
+            // ── Scanlines ──
+            Positioned.fill(
+              child: CustomPaint(painter: ScanlinePainter(_bgIn.value)),
+            ),
+
+            // ── Spotlight beams ──
+            Positioned.fill(
+              child: CustomPaint(
+                painter: BeamPainter(K.gold2, _bgIn.value * _glow.value),
+              ),
+            ),
+
+            // ── Top halo ──
+            Positioned(
+              top: -sz.height * 0.18,
+              left: -sz.width * 0.4,
+              right: -sz.width * 0.4,
+              child: Opacity(
+                opacity: _bgIn.value * _glow.value,
+                child: Container(
+                  height: sz.height * 0.6,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        K.blue.withOpacity(0.25),
+                        K.gold2.withOpacity(0.06),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // ── Bottom stage glow ──
+            Positioned(
+              bottom: -30,
+              left: -sz.width * 0.2,
+              right: -sz.width * 0.2,
+              child: Opacity(
+                opacity: _bgIn.value * 0.55,
+                child: Container(
+                  height: 180,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [K.gold2.withOpacity(0.22), Colors.transparent],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+
+            // ── Main content ──
+            SafeArea(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        // Logo + coins
+                        Transform.scale(
+                          scale: _logoIn.value.clamp(0.0, 1.0),
+                          child: Opacity(
+                            opacity: _logoIn.value.clamp(0.0, 1.0),
+                            child: _buildLogoSection(sz),
+                          ),
+                        ),
+                        const SizedBox(height: 36),
+
+                        // Title
+                        Transform.translate(
+                          offset: Offset(0, (1 - _titleIn.value) * 50),
+                          child: Opacity(
+                            opacity: _titleIn.value,
+                            child: _buildTitle(),
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Subtitle
+                        Opacity(opacity: _subIn.value, child: _buildSubtitle()),
+                      ],
+                    ),
+                  ),
+
+                  // Buttons
+                  Opacity(
+                    opacity: _btnsIn.value,
+                    child: Transform.translate(
+                      offset: Offset(0, (1 - _btnsIn.value) * 30),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 52),
+                        child: Column(
+                          children: [
+                            _buildStartBtn(),
+                            const SizedBox(height: 12),
+                            _buildHowBtn(),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLogoSection(Size sz) {
+    return Stack(
+      alignment: Alignment.center,
+      clipBehavior: Clip.none,
+      children: [
+        // Coin left
+        Positioned(
+          left: sz.width * 0.1,
+          top: -10,
+          child: const GoldCoin(size: 36, delay: Duration(milliseconds: 200)),
+        ),
+        // Coin right
+        Positioned(
+          right: sz.width * 0.1,
+          top: 15,
+          child: const GoldCoin(size: 28, delay: Duration(milliseconds: 600)),
+        ),
+        // Coin bottom-left
+        Positioned(
+          left: sz.width * 0.14,
+          bottom: -8,
+          child: const GoldCoin(size: 22, delay: Duration(milliseconds: 400)),
+        ),
+        // Coin bottom-right
+        Positioned(
+          right: sz.width * 0.14,
+          bottom: 0,
+          child: const GoldCoin(size: 32, delay: Duration(milliseconds: 100)),
+        ),
+
+        // Main orb
+        _buildMainOrb(),
+      ],
+    );
+  }
+
+  Widget _buildMainOrb() => Stack(
+    alignment: Alignment.center,
+    children: [
+      // Outer pulse rings
+      for (final r in [95.0, 80.0])
+        AnimatedBuilder(
+          animation: _glow,
+          builder: (_, __) => Container(
+            width: r * 2,
+            height: r * 2,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: K.gold2.withOpacity((1 - r / 100) * 0.35 * _glow.value),
+                width: 1,
+              ),
+            ),
+          ),
+        ),
+
+      // Main sphere
+      Container(
+        width: 140,
+        height: 140,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: const RadialGradient(
+            center: Alignment(-0.35, -0.45),
+            radius: 0.85,
+            colors: [K.gold0, K.gold1, K.gold2, K.gold3, K.gold4],
+            stops: [0.0, 0.15, 0.42, 0.72, 1.0],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: K.gold2.withOpacity(0.75 * _glow.value),
+              blurRadius: 60,
+              spreadRadius: 12,
+            ),
+            BoxShadow(
+              color: K.gold3.withOpacity(0.35 * _glow.value),
+              blurRadius: 120,
+              spreadRadius: 25,
+            ),
+          ],
+        ),
+        child: ClipOval(
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Specular highlight
+              Positioned(
+                top: 18,
+                left: 28,
+                child: Container(
+                  width: 48,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(30),
+                    gradient: RadialGradient(
+                      colors: [
+                        Colors.white.withOpacity(0.55),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Image.asset(
+                'assets/app_icon.png',
+                width: 88,
+                height: 88,
+                errorBuilder: (_, __, ___) =>
+                    const Text('💰', style: TextStyle(fontSize: 72)),
+              ),
+            ],
+          ),
+        ),
+      ),
+
+      // Top sparkle
+      const Positioned(top: 14, child: Dot(color: K.gold1, size: 6)),
+    ],
+  );
+
+  Widget _buildTitle() => Column(
+    children: [
+      // Decorative divider
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _goldLine(50),
+          const SizedBox(width: 10),
+          const Dot(color: K.gold2, size: 6),
+          const SizedBox(width: 10),
+          _goldLine(50),
+        ],
+      ),
+      const SizedBox(height: 18),
+
+      GoldText(
+        '5 MİLYONLUK',
+        style: const TextStyle(
+          fontSize: 42,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 5,
+          height: 1.0,
+        ),
+      ),
+      ShaderMask(
+        shaderCallback: (b) => const LinearGradient(
+          colors: [K.cyan, Color(0xFF82DFFF)],
+        ).createShader(b),
+        child: const Text(
+          'SORU YARIŞI',
+          style: TextStyle(
+            fontSize: 30,
+            fontWeight: FontWeight.w300,
+            color: Colors.white,
+            letterSpacing: 9,
+          ),
+        ),
+      ),
+      const SizedBox(height: 18),
+
+      Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _goldLine(50),
+          const SizedBox(width: 10),
+          const Dot(color: K.cyan, size: 6),
+          const SizedBox(width: 10),
+          _goldLine(50),
+        ],
+      ),
+    ],
+  );
+
+  Widget _goldLine(double w) => Container(
+    width: w,
+    height: 1,
+    decoration: const BoxDecoration(
+      gradient: LinearGradient(
+        colors: [Colors.transparent, K.gold2, Colors.transparent],
+      ),
+    ),
+  );
+
+  Widget _buildSubtitle() => Row(
+    mainAxisAlignment: MainAxisAlignment.center,
+    children: [
+      const GoldCoin(size: 18),
+      const SizedBox(width: 10),
+      Text(
+        'Kazanma Fırsatını Kaçırma!',
+        style: TextStyle(
+          fontSize: 14,
+          color: K.w60,
+          letterSpacing: 1.5,
+          fontWeight: FontWeight.w300,
+        ),
+      ),
+      const SizedBox(width: 10),
+      const GoldCoin(size: 18, delay: Duration(milliseconds: 300)),
+    ],
+  );
+
+  Widget _buildStartBtn() => _PressBtn(
+    label: 'OYUNA BAŞLA',
+    icon: Icons.play_arrow_rounded,
+    isPrimary: true,
+    onTap: _goToGame,
+  );
+
+  Widget _buildHowBtn() => _PressBtn(
+    label: 'NASIL OYNANIR?',
+    icon: Icons.help_outline_rounded,
+    isPrimary: false,
+    onTap: () => showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const _HowToPlay(),
+    ),
+  );
+}
+
+// ─── Press Button ───
+class _PressBtn extends StatefulWidget {
+  final String label;
+  final IconData icon;
+  final bool isPrimary;
+  final VoidCallback onTap;
+  const _PressBtn({
+    required this.label,
+    required this.icon,
+    required this.isPrimary,
+    required this.onTap,
+  });
+  @override
+  State<_PressBtn> createState() => _PressBtnState();
+}
+
+class _PressBtnState extends State<_PressBtn>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 90),
+  );
+  late final Animation<double> _s = Tween(
+    begin: 1.0,
+    end: 0.95,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.easeOut));
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTapDown: (_) => _c.forward(),
+    onTapUp: (_) {
+      _c.reverse();
+      widget.onTap();
+    },
+    onTapCancel: () => _c.reverse(),
+    child: ScaleTransition(
+      scale: _s,
+      child: widget.isPrimary ? _primary() : _secondary(),
+    ),
+  );
+
+  Widget _primary() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 19),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(16),
+      gradient: const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [K.gold0, K.gold1, K.gold2, K.gold3],
+        stops: [0.0, 0.2, 0.6, 1.0],
+      ),
+      boxShadow: [
+        BoxShadow(
+          color: K.gold2.withOpacity(0.6),
+          blurRadius: 32,
+          spreadRadius: 2,
+        ),
+        BoxShadow(color: K.gold3.withOpacity(0.3), blurRadius: 64),
+      ],
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(widget.icon, color: K.gold4, size: 26),
+        const SizedBox(width: 10),
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontSize: 17,
+            fontWeight: FontWeight.w900,
+            color: K.gold4,
+            letterSpacing: 3,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _secondary() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 17),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(16),
+      color: K.w05,
+      border: Border.all(color: K.w20, width: 1),
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(widget.icon, color: K.w60, size: 22),
+        const SizedBox(width: 10),
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: K.w60,
+            letterSpacing: 2.5,
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// ─── How To Play ───
+class _HowToPlay extends StatelessWidget {
+  const _HowToPlay();
+  @override
+  Widget build(BuildContext context) {
+    const rules = [
+      ('🎯', 'Her soru için 30 saniye süreniz var'),
+      ('💰', '3 bölümde toplam 16 soruyu doğru cevaplayın'),
+      ('🛡️', 'Baraj sorularında ödül garanti altına alınır'),
+      ('🃏', '6 farklı joker hakkı kullanabilirsiniz'),
+      ('📺', 'Bölüm 2-3\'te joker için kısa reklam izlenir'),
+      ('🚪', 'İstediğiniz an çekilip garantili ödülü alabilirsiniz'),
+    ];
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+            color: K.panel.withOpacity(0.96),
+            border: Border.all(color: K.gold2.withOpacity(0.25), width: 1),
+          ),
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.64,
+            maxChildSize: 0.9,
+            minChildSize: 0.4,
+            expand: false,
+            builder: (_, sc) => ListView(
+              controller: sc,
+              padding: const EdgeInsets.fromLTRB(22, 10, 22, 40),
+              children: [
+                Center(
+                  child: Container(
+                    width: 44,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 22),
+                    decoration: BoxDecoration(
+                      color: K.w20,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const Center(
+                  child: GoldText(
+                    'NASIL OYNANIR?',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 4,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Center(
+                  child: Container(
+                    height: 1.5,
+                    width: 80,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.transparent,
+                          K.gold2,
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                ...rules.map(
+                  (r) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: GlassBox(
+                      borderColor: K.gold2,
+                      radius: 14,
+                      blur: 8,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 14,
+                      ),
+                      child: Row(
+                        children: [
+                          Text(r.$1, style: const TextStyle(fontSize: 26)),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Text(
+                              r.$2,
+                              style: const TextStyle(
+                                color: K.w80,
+                                fontSize: 14.5,
+                                height: 1.5,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: () => Navigator.pop(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 17),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: const LinearGradient(
+                        colors: [K.gold1, K.gold2, K.gold3],
+                      ),
+                      boxShadow: [
+                        BoxShadow(color: K.goldShadow, blurRadius: 24),
+                      ],
+                    ),
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'ANLADIM!',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: K.gold4,
+                        letterSpacing: 3,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  GAME SCREEN
+// ═══════════════════════════════════════════════════════════════════
+class GameScreen extends StatefulWidget {
+  const GameScreen({super.key});
+  @override
+  State<GameScreen> createState() => _GameState();
+}
+
+class _GameState extends State<GameScreen> with TickerProviderStateMixin {
+  int lvlIdx = 0, step = 0, selected = -1;
+  bool answered = false, loading = true;
+  int timeLeft = 30;
+  Set<int> hidden = {};
+  List<List<Map<String, dynamic>>> qs = [];
+  int? correct;
+
+  bool l50 = false,
+      lAud = false,
+      lPhone = false,
+      lDip = false,
+      lTime = false,
+      lSwap = false;
+  bool dipActive = false;
+  int dipTries = 0;
+
+  late final AnimationController _timerC =
+      AnimationController(vsync: this, duration: const Duration(seconds: 30))
+        ..addListener(_tick)
+        ..addStatusListener(_timerDone);
+  late final AnimationController _qC = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 520),
+  );
+  late final AnimationController _pulseC = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
+  late final AnimationController _flashC = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 700),
+  );
+  late final AnimationController _ambientC = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 6),
+  )..repeat(reverse: true);
+
+  late final Animation<double> _qFade = CurvedAnimation(
+    parent: _qC,
+    curve: Curves.easeIn,
+  );
+  late final Animation<Offset> _qSlide = Tween<Offset>(
+    begin: const Offset(0, 0.07),
+    end: Offset.zero,
+  ).animate(CurvedAnimation(parent: _qC, curve: Curves.easeOutCubic));
+  late final Animation<double> _timerPulse = Tween(
+    begin: 0.9,
+    end: 1.1,
+  ).animate(CurvedAnimation(parent: _pulseC, curve: Curves.easeInOut));
+  late final Animation<double> _flashOut = CurvedAnimation(
+    parent: _flashC,
+    curve: Curves.easeOut,
+  );
+  late final Animation<double> _ambient = Tween(
+    begin: 0.6,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _ambientC, curve: Curves.easeInOut));
+
+  bool _timeUpDone = false, _timerRunning = false;
+
+  BannerAd? _banner;
+  bool _bannerLoaded = false;
+  RewardedAd? _rewarded;
+  InterstitialAd? _levelAd;
+  bool _waitingLevel = false;
+
+  final _sfx = AudioPlayer();
+
+  Level get lvl => Level.all[lvlIdx];
+  bool get highLevel => lvlIdx >= 1;
+  int get total => lvl.count;
+  String get prize => step < total ? lvl.prizes[step] : lvl.prizes.last;
+
+  // ── Answer state color ──
+  Color get _stageColor {
+    if (answered) {
+      return selected == correct ? K.correct : K.wrong;
+    }
+    return lvl.color;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadBanner();
+    _loadRewarded();
+    _loadLevelAd();
+    _loadQuestions();
+  }
+
+  @override
+  void dispose() {
+    _timerC.dispose();
+    _qC.dispose();
+    _pulseC.dispose();
+    _flashC.dispose();
+    _ambientC.dispose();
+    _banner?.dispose();
+    _rewarded?.dispose();
+    _levelAd?.dispose();
+    _sfx.dispose();
+    super.dispose();
+  }
+
+  // ── Timer ──
+  void _tick() {
+    final n = 30 - (_timerC.lastElapsedDuration?.inSeconds ?? 0);
+    if (n != timeLeft && mounted) setState(() => timeLeft = n.clamp(0, 30));
+    if (!_timerRunning) {
+      _timerRunning = true;
+      _sound('timer.mp3', loop: true);
+    }
+  }
+
+  void _timerDone(AnimationStatus s) {
+    if (s == AnimationStatus.completed && !_timeUpDone) {
+      _timeUpDone = true;
+      _stopSound();
+      if (!answered) _reveal(timeout: true);
+    }
+  }
+
+  void _startTimer([int sec = 30]) {
+    _timerRunning = false;
+    _timeUpDone = false;
+    timeLeft = sec;
+    _timerC.duration = Duration(seconds: sec);
+    _timerC.forward(from: 0);
+  }
+
+  void _pauseTimer() {
+    _timerC.stop();
+    _stopSound();
+    _timerRunning = false;
+  }
+
+  void _resumeTimer() {
+    if (!mounted || answered) return;
+    _timerRunning = false;
+    _timeUpDone = false;
+    _timerC.duration = Duration(seconds: timeLeft);
+    _timerC.forward(from: 0);
+  }
+
+  // ── Audio ──
+  Future<void> _sound(String f, {bool loop = false}) async {
+    try {
+      await _sfx.stop();
+      await _sfx.setReleaseMode(loop ? ReleaseMode.loop : ReleaseMode.stop);
+      await _sfx.setSource(AssetSource('sounds/$f'));
+      await _sfx.resume();
+    } catch (_) {}
+  }
+
+  void _stopSound() => _sfx.stop();
+
+  // ── Ads ──
+  void _loadBanner() {
+    _banner = BannerAd(
+      size: AdSize.banner,
+      adUnitId: Ads.banner,
+      request: const AdRequest(),
+      listener: BannerAdListener(
+        onAdLoaded: (_) => setState(() => _bannerLoaded = true),
+        onAdFailedToLoad: (ad, _) {
+          ad.dispose();
+          setState(() => _bannerLoaded = false);
+          Future.delayed(const Duration(seconds: 12), _loadBanner);
+        },
+      ),
+    )..load();
+  }
+
+  void _loadRewarded() {
+    RewardedAd.load(
+      adUnitId: Ads.rewarded,
+      request: const AdRequest(),
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) => _rewarded = ad,
+        onAdFailedToLoad: (_) {
+          _rewarded = null;
+          Future.delayed(const Duration(seconds: 8), _loadRewarded);
+        },
+      ),
+    );
+  }
+
+  void _loadLevelAd() {
+    InterstitialAd.load(
+      adUnitId: Ads.interstitial,
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) => _levelAd = ad,
+        onAdFailedToLoad: (_) {
+          _levelAd = null;
+          if (_waitingLevel && mounted) _doLevelTransition();
+        },
+      ),
+    );
+  }
+
+  void _adForLifeline(String name, VoidCallback grant) {
+    if (!highLevel) {
+      grant();
+      _snack('$name kullanıldı! ✅', K.correct);
+      return;
+    }
+    _pauseTimer();
+    if (_rewarded != null) {
+      _rewarded!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _rewarded = null;
+          _loadRewarded();
+          _resumeTimer();
+          grant();
+          _snack('$name kazandınız! 🎉', K.correct);
+        },
+        onAdFailedToShowFullScreenContent: (ad, _) {
+          ad.dispose();
+          _rewarded = null;
+          _fallbackAd(name, grant);
+        },
+      );
+      _rewarded!.show(onUserEarnedReward: (_, __) {});
+      _rewarded = null;
+    } else {
+      _fallbackAd(name, grant);
+    }
+  }
+
+  void _fallbackAd(String name, VoidCallback grant) {
+    InterstitialAd.load(
+      adUnitId: Ads.interstitial,
+      request: const AdRequest(),
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          ad.fullScreenContentCallback = FullScreenContentCallback(
+            onAdDismissedFullScreenContent: (a) {
+              a.dispose();
+              _resumeTimer();
+              grant();
+              _snack('$name kazandınız!', K.correct);
+            },
+            onAdFailedToShowFullScreenContent: (a, _) {
+              a.dispose();
+              _resumeTimer();
+              grant();
+            },
+          );
+          ad.show();
+        },
+        onAdFailedToLoad: (_) {
+          _resumeTimer();
+          grant();
+          _snack('$name verildi.', Colors.orange);
+        },
+      ),
+    );
+  }
+
+  // ── Questions ──
+  Future<void> _loadQuestions() async {
+    setState(() => loading = true);
+    try {
+      final raw =
+          json.decode(await rootBundle.loadString('assets/questions.json'))
+              as List;
+      final all = raw.map((e) => Map<String, dynamic>.from(e)).toList()
+        ..sort(
+          (a, b) => (a['difficulty'] ?? 5).compareTo(b['difficulty'] ?? 5),
+        );
+      final easy = all.where((q) => (q['difficulty'] ?? 5) <= 3).toList()
+        ..shuffle();
+      final hard = all.where((q) => (q['difficulty'] ?? 5) > 3).toList()
+        ..shuffle();
+      final ordered = [...easy.take(10), ...hard, ...easy.skip(10)];
+      qs = [];
+      int i = 0;
+      for (final lv in Level.all) {
+        qs.add(ordered.skip(i).take(lv.count).toList());
+        i += lv.count;
+      }
+      setState(() {
+        loading = false;
+        lvlIdx = 0;
+        step = 0;
+        correct = _ci(0, 0);
+      });
+      _qC.forward(from: 0);
+      _startTimer();
+    } catch (e) {
+      setState(() => loading = false);
+      _snack('Soru yüklenemedi: $e', K.wrong);
+    }
+  }
+
+  int? _ci(int lv, int st) {
+    if (lv >= qs.length || st >= qs[lv].length) return null;
+    final q = qs[lv][st];
+    final opts = (q['options'] as List?)?.cast<String>() ?? [];
+    return opts.indexOf(q['correctAnswer']?.toString() ?? '');
+  }
+
+  String get _qText {
+    if (qs.isEmpty || lvlIdx >= qs.length || step >= qs[lvlIdx].length)
+      return '—';
+    return qs[lvlIdx][step]['question']?.toString() ?? '—';
+  }
+
+  List<String> get _opts {
+    if (qs.isEmpty || lvlIdx >= qs.length || step >= qs[lvlIdx].length)
+      return [];
+    return (qs[lvlIdx][step]['options'] as List?)?.cast<String>() ?? [];
+  }
+
+  // ── Game flow ──
+  void _reveal({bool timeout = false}) async {
+    if (answered) return;
+    _pauseTimer();
+    if (timeout || selected == -1) {
+      setState(() => answered = true);
+      _flashC.forward(from: 0);
+      await _sound('wrong.mp3');
+      Future.delayed(const Duration(milliseconds: 1800), _endGame);
+      return;
+    }
+    if (selected == correct) {
+      setState(() => answered = true);
+      dipActive = false;
+      dipTries = 0;
+      _flashC.forward(from: 0);
+      await _sound('correct.mp3');
+      Future.delayed(const Duration(milliseconds: 1800), _nextQ);
+    } else if (dipActive && dipTries < 1) {
+      dipTries++;
+      await _sound('wrong.mp3');
+      setState(() {
+        hidden.add(selected);
+        selected = -1;
+        answered = false;
+      });
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        if (!mounted) return;
+        _snack('Yanlış! Bir hakkınız daha var. 🎯', K.blue);
+        _resumeTimer();
+      });
+    } else {
+      setState(() => answered = true);
+      _flashC.forward(from: 0);
+      await _sound('wrong.mp3');
+      Future.delayed(const Duration(milliseconds: 1800), _endGame);
+    }
+  }
+
+  void _nextQ() {
+    if (step == total - 1) {
+      lvlIdx < Level.all.length - 1
+          ? _levelUp()
+          : _showEnd(true, '${Level.all.last.prizes.last} kazandınız!');
+      return;
+    }
+    setState(() {
+      step++;
+      selected = -1;
+      answered = false;
+      hidden.clear();
+      correct = _ci(lvlIdx, step);
+    });
+    _qC.forward(from: 0);
+    _startTimer();
+  }
+
+  void _levelUp() {
+    _pauseTimer();
+    setState(() => _waitingLevel = true);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => WillPopScope(
+        onWillPop: () async => false,
+        child: _LevelUpDialog(next: Level.all[lvlIdx + 1]),
+      ),
+    );
+    if (_levelAd != null) {
+      _levelAd!.fullScreenContentCallback = FullScreenContentCallback(
+        onAdDismissedFullScreenContent: (ad) {
+          ad.dispose();
+          _levelAd = null;
+          _loadLevelAd();
+          if (mounted) _doLevelTransition();
+        },
+        onAdFailedToShowFullScreenContent: (ad, _) {
+          ad.dispose();
+          _levelAd = null;
+          _loadLevelAd();
+          if (mounted) _doLevelTransition();
+        },
+      );
+      _levelAd!.show();
+      _levelAd = null;
+    } else {
+      Future.delayed(const Duration(milliseconds: 1200), () {
+        if (mounted) _doLevelTransition();
+      });
+    }
+  }
+
+  void _doLevelTransition() {
+    if (!mounted) return;
+    Navigator.pop(context);
+    setState(() {
+      lvlIdx++;
+      step = 0;
+      selected = -1;
+      answered = false;
+      hidden.clear();
+      correct = _ci(lvlIdx, 0);
+      _waitingLevel = false;
+      l50 = lAud = lPhone = lDip = lTime = lSwap = false;
+      dipActive = false;
+      dipTries = 0;
+    });
+    _qC.forward(from: 0);
+    _startTimer();
+  }
+
+  String _guarantee([int? s]) {
+    final idx = s ?? step;
+    final cp = lvl.checkpoints;
+    for (int i = cp.length - 1; i >= 0; i--) {
+      if (idx >= cp[i]) return lvl.prizes[cp[i]];
+    }
+    return lvlIdx > 0 ? Level.all[lvlIdx - 1].prizes.last : '0 TL';
+  }
+
+  void _endGame() {
+    _pauseTimer();
+    _showEnd(false, 'Garantili kazanç: ${_guarantee(step)}');
+  }
+
+  void _giveUp() {
+    _pauseTimer();
+    _showEnd(true, 'Kazanç: ${_guarantee(step > 0 ? step - 1 : 0)}');
+  }
+
+  void _reset() {
+    _pauseTimer();
+    setState(() {
+      selected = -1;
+      lvlIdx = 0;
+      step = 0;
+      answered = false;
+      hidden.clear();
+      correct = null;
+      _timerRunning = false;
+      loading = true;
+      l50 = lAud = lPhone = lDip = lTime = lSwap = false;
+      dipActive = false;
+      dipTries = 0;
+    });
+    _loadQuestions();
+  }
+
+  void _showEnd(bool win, String msg) => showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => _EndDialog(
+      win: win,
+      msg: msg,
+      onRetry: () {
+        Navigator.pop(context);
+        _reset();
+      },
+      onExit: SystemNavigator.pop,
+    ),
+  );
+
+  // ── Lifelines ──
+  void _askLifeline(
+    String name,
+    String emoji,
+    String desc,
+    VoidCallback action,
+  ) {
+    if (answered) {
+      _snack('Cevap açıkken joker kullanılamaz!', K.wrong);
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => _LifelineDialog(
+        name: name,
+        emoji: emoji,
+        desc: desc,
+        highLevel: highLevel,
+        onConfirm: () {
+          Navigator.pop(ctx);
+          _adForLifeline(name, action);
+        },
+        onCancel: () => Navigator.pop(ctx),
+      ),
+    );
+  }
+
+  void _use50() {
+    if (l50 || correct == null || answered) return;
+    _askLifeline('Yarı Yarıya', '✂️', 'İki yanlış şık elenecek.', () {
+      setState(() {
+        l50 = true;
+        hidden.clear();
+        final w = List.generate(4, (i) => i).where((i) => i != correct).toList()
+          ..shuffle();
+        hidden.addAll(w.take(2));
+      });
+    });
+  }
+
+  void _useAud() {
+    if (lAud || correct == null || answered) return;
+    _askLifeline(
+      'Seyirciye Sor',
+      '👥',
+      'Seyirci oy dağılımı gösterilecek.',
+      () {
+        setState(() => lAud = true);
+        final r = Random();
+        int cv = 55 + r.nextInt(36), rem = 100 - cv;
+        final Map<String, int> v = {};
+        const L = ['A', 'B', 'C', 'D'];
+        final w = List.generate(
+          4,
+          (i) => i,
+        ).where((i) => i != correct && !hidden.contains(i)).toList();
+        for (int i = 0; i < w.length; i++) {
+          final val = i == w.length - 1
+              ? rem
+              : (rem * (0.1 + r.nextDouble() * 0.4)).round().clamp(0, rem);
+          v[L[w[i]]] = val;
+          rem -= val;
+        }
+        v[L[correct!]] = cv;
+        final sorted = v.entries.toList()
+          ..sort((a, b) => L.indexOf(a.key).compareTo(L.indexOf(b.key)));
+        showDialog(
+          context: context,
+          builder: (_) =>
+              _AudienceDialog(votes: sorted, correctLabel: L[correct!]),
+        );
+      },
+    );
+  }
+
+  void _usePhone() {
+    if (lPhone || correct == null || answered) return;
+    _askLifeline('Telefon', '📞', 'Bir arkadaşınıza danışın.', () {
+      setState(() => lPhone = true);
+      final r = Random();
+      final opts = _opts;
+      final avail = List.generate(
+        4,
+        (i) => i,
+      ).where((i) => !hidden.contains(i) && i != correct).toList();
+      final ans = r.nextInt(10) < 8
+          ? opts[correct!]
+          : (avail.isNotEmpty
+                ? opts[avail[r.nextInt(avail.length)]]
+                : opts[correct!]);
+      final pct = 62 + r.nextInt(33);
+      showDialog(
+        context: context,
+        builder: (_) => _PhoneDialog(answer: ans, confidence: pct),
+      );
+    });
+  }
+
+  void _useDip() {
+    if (lDip || answered) return;
+    if (step < lvl.checkpoints.last) {
+      _snack(
+        'Çift cevap yalnızca baraj sonrası kullanılabilir!',
+        Colors.orange,
+      );
+      return;
+    }
+    _askLifeline('Çift Cevap', '🎯', 'İki kez yanıt hakkı kazanırsınız.', () {
+      setState(() {
+        lDip = true;
+        dipActive = true;
+        dipTries = 0;
+      });
+    });
+  }
+
+  void _useTime() {
+    if (lTime || answered) return;
+    _askLifeline('Ekstra Süre', '⏰', '+15 saniye eklenir.', () {
+      _pauseTimer();
+      setState(() => lTime = true);
+      Future.delayed(
+        const Duration(milliseconds: 50),
+        () => _startTimer((timeLeft + 15).clamp(0, 60)),
+      );
+    });
+  }
+
+  void _useSwap() {
+    if (lSwap || answered) return;
+    _askLifeline('Soru Değiştir', '🔄', 'Geçerli soru değiştirilecek.', () {
+      if (qs[lvlIdx].length > step + 1) {
+        setState(() {
+          lSwap = true;
+          final rm = qs[lvlIdx].removeAt(step);
+          qs[lvlIdx].add(rm);
+          selected = -1;
+          answered = false;
+          hidden.clear();
+          correct = _ci(lvlIdx, step);
+        });
+        _qC.forward(from: 0);
+        _startTimer();
+      } else {
+        _snack('Değiştirilebilecek soru yok.', Colors.orange);
+      }
+    });
+  }
+
+  void _snack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w700)),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.all(14),
+      ),
+    );
+  }
+
+  // ═══════════════════════════════════════════
+  //  BUILD
+  // ═══════════════════════════════════════════
+  @override
+  Widget build(BuildContext context) {
+    if (loading) return _loadingScreen();
+    return WillPopScope(
+      onWillPop: () async {
+        _giveUp();
+        return false;
+      },
+      child: Scaffold(
+        drawer: _buildDrawer(),
+        body: AnimatedBuilder(
+          animation: Listenable.merge([_ambientC, _flashC]),
+          builder: (_, __) {
+            final stageCol = _stageColor;
+            return Stack(
+              children: [
+                // ── Background image ──
+                Positioned.fill(
+                  child: Image.asset(
+                    'assets/background.jpg',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => Container(color: K.ink),
+                  ),
+                ),
+
+                // ── Primary dark overlay ──
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          K.ink.withOpacity(0.88),
+                          K.ink.withOpacity(0.82),
+                          K.ink.withOpacity(0.96),
+                        ],
+                        stops: const [0.0, 0.5, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── Scanlines ──
+                Positioned.fill(
+                  child: CustomPaint(painter: ScanlinePainter(1.0)),
+                ),
+
+                // ── Dynamic spotlight beams ──
+                Positioned.fill(
+                  child: CustomPaint(
+                    painter: BeamPainter(
+                      stageCol,
+                      0.55 + 0.45 * _ambient.value,
+                    ),
+                  ),
+                ),
+
+                // ── Color halo (animated, reflects answer state) ──
+                Positioned(
+                  top: -120,
+                  left: -80,
+                  right: -80,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 700),
+                    curve: Curves.easeInOut,
+                    height: 380,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          stageCol.withOpacity(0.22 * _ambient.value),
+                          stageCol.withOpacity(0.05),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── Floor glow ──
+                Positioned(
+                  bottom: -20,
+                  left: -40,
+                  right: -40,
+                  child: Container(
+                    height: 160,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        colors: [
+                          stageCol.withOpacity(0.14 * _ambient.value),
+                          Colors.transparent,
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+
+                // ── Answer flash overlay ──
+                if (answered)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: FadeTransition(
+                        opacity: Tween(
+                          begin: 0.22,
+                          end: 0.0,
+                        ).animate(_flashOut),
+                        child: Container(
+                          color: selected == correct ? K.correct : K.wrong,
+                        ),
+                      ),
+                    ),
+                  ),
+
+                // ── Main UI ──
+                SafeArea(
+                  child: Column(
+                    children: [
+                      _buildTopBar(),
+                      _buildLifelineBar(),
+                      Expanded(
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(child: _buildQuestionArea()),
+                            _buildMoneyLadder(),
+                          ],
+                        ),
+                      ),
+                      _buildBannerArea(),
+                    ],
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  // ── Loading ──
+  Widget _loadingScreen() => Scaffold(
+    body: Stack(
+      children: [
+        Positioned.fill(
+          child: Image.asset(
+            'assets/background.jpg',
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(color: K.ink),
+          ),
+        ),
+        Positioned.fill(
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xEE010205), Color(0xCC020408)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+          ),
+        ),
+        Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const GoldCoin(size: 72),
+              const SizedBox(height: 28),
+              const GoldText(
+                'YÜKLÜYOR',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 5,
+                ),
+              ),
+              const SizedBox(height: 20),
+              SizedBox(
+                width: 180,
+                child: LinearProgressIndicator(
+                  backgroundColor: K.w10,
+                  valueColor: const AlwaysStoppedAnimation(K.gold2),
+                  minHeight: 3,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  // ── Top Bar ──
+  Widget _buildTopBar() => ClipRect(
+    child: BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(4, 8, 14, 10),
+        decoration: BoxDecoration(
+          color: K.panel.withOpacity(0.85),
+          border: Border(
+            bottom: BorderSide(color: lvl.color.withOpacity(0.3), width: 1),
+          ),
+        ),
+        child: Row(
+          children: [
+            Builder(
+              builder: (ctx) => IconButton(
+                icon: Icon(Icons.menu_rounded, color: lvl.color, size: 27),
+                onPressed: () => Scaffold.of(ctx).openDrawer(),
+              ),
+            ),
+            const SizedBox(width: 2),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Dot(color: lvl.color, size: 6),
+                      const SizedBox(width: 7),
+                      Text(
+                        lvl.name,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: lvl.color,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 2.5,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(width: 1, height: 11, color: K.w20),
+                      const SizedBox(width: 8),
+                      Text(
+                        'SORU ${step + 1}/$total',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: K.w40,
+                          letterSpacing: 1.5,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  // Prize display with coin icon
+                  PrizeChip(prize, large: true),
+                ],
+              ),
+            ),
+            _buildTimer(),
+          ],
+        ),
+      ),
+    ),
+  );
+
+  // ── Timer ──
+  Widget _buildTimer() {
+    final pct = timeLeft / 30.0;
+    final col = timeLeft > 20
+        ? K.correct
+        : timeLeft > 10
+        ? Colors.orange
+        : K.wrong;
+    return AnimatedBuilder(
+      animation: _pulseC,
+      builder: (_, __) => Transform.scale(
+        scale: timeLeft <= 10 ? _timerPulse.value : 1.0,
+        child: SizedBox(
+          width: 66,
+          height: 66,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              // Outer glow
+              if (timeLeft <= 10)
+                Container(
+                  width: 66,
+                  height: 66,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: col.withOpacity(0.45 * _timerPulse.value),
+                        blurRadius: 22,
+                        spreadRadius: 5,
+                      ),
+                    ],
+                  ),
+                ),
+              CircularProgressIndicator(
+                value: pct,
+                color: col,
+                backgroundColor: K.w10,
+                strokeWidth: 4,
+              ),
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(colors: [K.panelLight, K.panel]),
+                  boxShadow: [
+                    BoxShadow(color: col.withOpacity(0.25), blurRadius: 12),
+                  ],
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  '$timeLeft',
+                  style: TextStyle(
+                    color: col,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Lifeline Bar ──
+  Widget _buildLifelineBar() {
+    final items = [
+      _LI('✂️', '50:50', l50, K.gold2, _use50),
+      _LI('👥', 'Seyirci', lAud, K.gold2, _useAud),
+      _LI('📞', 'Telefon', lPhone, K.cyan, _usePhone),
+      _LI(
+        '🎯',
+        '2×Cevap',
+        lDip || step < lvl.checkpoints.last,
+        Colors.pinkAccent,
+        _useDip,
+      ),
+      _LI('⏰', '+15sn', lTime, Colors.tealAccent, _useTime),
+      _LI('🔄', 'Değiştir', lSwap, Colors.orange, _useSwap),
+    ];
+
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+        child: Container(
+          height: 68,
+          decoration: BoxDecoration(
+            color: K.navy.withOpacity(0.88),
+            border: Border(bottom: BorderSide(color: K.w10, width: 1)),
+          ),
+          child: Row(
+            children: items
+                .map(
+                  (item) => Expanded(
+                    child: GestureDetector(
+                      onTap: item.used ? null : item.onTap,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 2.5,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(11),
+                          gradient: item.used
+                              ? null
+                              : LinearGradient(
+                                  begin: Alignment.topLeft,
+                                  end: Alignment.bottomRight,
+                                  colors: [
+                                    item.color.withOpacity(0.18),
+                                    item.color.withOpacity(0.04),
+                                  ],
+                                ),
+                          color: item.used ? K.w05 : null,
+                          border: Border.all(
+                            color: item.used
+                                ? K.w10
+                                : item.color.withOpacity(0.55),
+                            width: item.used ? 0.5 : 1.2,
+                          ),
+                          boxShadow: item.used
+                              ? []
+                              : [
+                                  BoxShadow(
+                                    color: item.color.withOpacity(0.22),
+                                    blurRadius: 10,
+                                  ),
+                                ],
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              item.emoji,
+                              style: TextStyle(
+                                fontSize: 17,
+                                color: item.used ? null : null,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              item.label,
+                              style: TextStyle(
+                                fontSize: 9.5,
+                                color: item.used ? K.w20 : item.color,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                            if (highLevel && !item.used)
+                              const Text(
+                                '📺',
+                                style: TextStyle(fontSize: 7, height: 1.3),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Question Area ──
+  Widget _buildQuestionArea() => SingleChildScrollView(
+    padding: const EdgeInsets.fromLTRB(12, 14, 6, 12),
+    child: Column(
+      children: [
+        // Question card
+        FadeTransition(
+          opacity: _qFade,
+          child: SlideTransition(
+            position: _qSlide,
+            child: GlassBox(
+              borderColor: lvl.color,
+              radius: 22,
+              blur: 18,
+              padding: const EdgeInsets.all(22),
+              child: Column(
+                children: [
+                  // Step badge
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(20),
+                      color: lvl.color.withOpacity(0.12),
+                      border: Border.all(
+                        color: lvl.color.withOpacity(0.4),
+                        width: 1,
+                      ),
+                    ),
+                    child: Text(
+                      'SORU ${step + 1} · ${lvl.name}',
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: lvl.color,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 2,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    _qText,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 17.5,
+                      color: K.w100,
+                      fontWeight: FontWeight.w500,
+                      height: 1.65,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+
+        const SizedBox(height: 14),
+
+        // Option tiles
+        ...List.generate(_opts.length, _buildOption),
+      ],
+    ),
+  );
+
+  Widget _buildOption(int i) {
+    const letters = ['A', 'B', 'C', 'D'];
+    final optCol = K.opts[i];
+
+    if (hidden.contains(i)) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Container(
+          height: 58,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            color: K.w05,
+            border: Border.all(color: K.w10, width: 0.5),
+          ),
+        ),
+      );
+    }
+
+    final isSel = selected == i;
+    final isCorr = correct == i;
+
+    // Determine display state
+    Color stateColor = optCol;
+    bool showGlow = false;
+    if (answered) {
+      if (isCorr) {
+        stateColor = K.correct;
+        showGlow = true;
+      } else if (isSel) {
+        stateColor = K.wrong;
+        showGlow = true;
+      } else
+        stateColor = optCol.withOpacity(0.3);
+    } else if (isSel) {
+      stateColor = K.select;
+      showGlow = true;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: GestureDetector(
+        onTap:
+            (answered ||
+                hidden.contains(i) ||
+                (selected != -1 && (!dipActive || dipTries >= 1)))
+            ? null
+            : () {
+                setState(() => selected = i);
+                Future.delayed(const Duration(milliseconds: 900), _reveal);
+              },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 260),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: showGlow
+                  ? [stateColor.withOpacity(0.28), stateColor.withOpacity(0.10)]
+                  : [K.panelMid.withOpacity(0.75), K.panel.withOpacity(0.65)],
+            ),
+            border: Border.all(
+              color: showGlow
+                  ? stateColor
+                  : optCol.withOpacity(answered ? 0.15 : 0.32),
+              width: showGlow ? 1.8 : 1,
+            ),
+            boxShadow: showGlow
+                ? [
+                    BoxShadow(
+                      color: stateColor.withOpacity(0.42),
+                      blurRadius: 20,
+                      spreadRadius: 1,
+                    ),
+                    BoxShadow(
+                      color: stateColor.withOpacity(0.15),
+                      blurRadius: 40,
+                    ),
+                  ]
+                : [],
+          ),
+          child: Row(
+            children: [
+              // Letter badge
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(11),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: showGlow
+                        ? [
+                            stateColor.withOpacity(0.50),
+                            stateColor.withOpacity(0.22),
+                          ]
+                        : [optCol.withOpacity(0.20), optCol.withOpacity(0.07)],
+                  ),
+                  border: Border.all(
+                    color: showGlow
+                        ? stateColor
+                        : optCol.withOpacity(answered ? 0.15 : 0.40),
+                    width: 1.2,
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  letters[i],
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16,
+                    color: showGlow
+                        ? stateColor
+                        : optCol.withOpacity(answered ? 0.3 : 0.85),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Text(
+                  _opts[i],
+                  style: TextStyle(
+                    fontSize: 15.5,
+                    color: answered
+                        ? (showGlow ? K.w100 : K.w40)
+                        : (showGlow ? K.w100 : K.w80),
+                    height: 1.35,
+                    fontWeight: showGlow ? FontWeight.w600 : FontWeight.w400,
+                  ),
+                ),
+              ),
+
+              // State icon
+              if (answered && isCorr)
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: K.correct.withOpacity(0.18),
+                    border: Border.all(color: K.correct, width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.check_rounded,
+                    color: K.correct,
+                    size: 16,
+                  ),
+                ),
+              if (answered && isSel && !isCorr)
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: K.wrong.withOpacity(0.18),
+                    border: Border.all(color: K.wrong, width: 1.5),
+                  ),
+                  child: const Icon(
+                    Icons.close_rounded,
+                    color: K.wrong,
+                    size: 16,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Money Ladder ──
+  Widget _buildMoneyLadder() {
+    final prizes = lvl.prizes;
+    final cps = lvl.checkpoints;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          width: 82,
+          margin: const EdgeInsets.fromLTRB(0, 8, 10, 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            color: K.panel.withOpacity(0.7),
+            border: Border.all(color: lvl.color.withOpacity(0.25), width: 1),
+            boxShadow: [
+              BoxShadow(color: lvl.color.withOpacity(0.06), blurRadius: 16),
+            ],
+          ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const GoldCoin(size: 12),
+                    const SizedBox(width: 4),
+                    const Text(
+                      'ÖDÜL',
+                      style: TextStyle(
+                        fontSize: 8,
+                        color: K.w40,
+                        letterSpacing: 2,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Container(height: 1, color: K.w10),
+              Expanded(
+                child: ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  reverse: true,
+                  itemCount: prizes.length,
+                  itemBuilder: (_, i) {
+                    final isCur = i == step, isPast = i < step;
+                    final isCp = cps.contains(i),
+                        isTop = i == prizes.length - 1;
+
+                    if (isCur) {
+                      return AnimatedContainer(
+                        duration: const Duration(milliseconds: 400),
+                        margin: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2.5,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 6,
+                          horizontal: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          gradient: LinearGradient(
+                            colors: [
+                              K.gold2.withOpacity(0.30),
+                              K.gold2.withOpacity(0.10),
+                            ],
+                          ),
+                          border: Border.all(
+                            color: K.gold2.withOpacity(0.75),
+                            width: 1.2,
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: K.gold2.withOpacity(0.35),
+                              blurRadius: 12,
+                            ),
+                          ],
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          prizes[i],
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            color: K.gold1,
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }
+
+                    Color tc = K.w20;
+                    if (isPast)
+                      tc = K.correct;
+                    else if (isCp)
+                      tc = K.locked;
+                    else if (isTop)
+                      tc = K.gold1;
+
+                    return Container(
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2.5,
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 5,
+                        horizontal: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        color: isPast
+                            ? K.correct.withOpacity(0.08)
+                            : isCp
+                            ? K.locked.withOpacity(0.08)
+                            : null,
+                        border: isCp && !isPast
+                            ? Border.all(
+                                color: K.locked.withOpacity(0.3),
+                                width: 0.5,
+                              )
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (isPast)
+                            Text(
+                              '✓',
+                              style: TextStyle(fontSize: 7, color: K.correct),
+                            ),
+                          if (isCp && !isPast)
+                            const Text('🛡', style: TextStyle(fontSize: 7)),
+                          Flexible(
+                            child: Text(
+                              prizes[i],
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: tc, fontSize: 9.5),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── Banner ──
+  Widget _buildBannerArea() => Container(
+    height: 52,
+    color: Colors.black,
+    child: _bannerLoaded && _banner != null
+        ? AdWidget(ad: _banner!)
+        : Center(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: List.generate(
+                3,
+                (i) => Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 5),
+                  child: Dot(color: K.gold3, size: 5),
+                ),
+              ),
+            ),
+          ),
+  );
+
+  // ── Drawer ──
+  Widget _buildDrawer() => Drawer(
+    backgroundColor: Colors.transparent,
+    child: ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [K.panelLight, K.panel, K.navy],
+              stops: const [0.0, 0.5, 1.0],
+            ),
+            border: Border(
+              right: BorderSide(color: lvl.color.withOpacity(0.25), width: 1),
+            ),
+          ),
+          child: SafeArea(
+            child: Column(
+              children: [
+                // Header with prize
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 18),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [lvl.color.withOpacity(0.18), Colors.transparent],
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                    ),
+                    border: Border(bottom: BorderSide(color: K.w10, width: 1)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Dot(color: lvl.color, size: 8),
+                          const SizedBox(width: 10),
+                          Text(
+                            lvl.name,
+                            style: TextStyle(
+                              color: lvl.color,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 13,
+                              letterSpacing: 2.5,
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            '${step + 1}/$total',
+                            style: const TextStyle(color: K.w40, fontSize: 12),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      // Big prize display
+                      PrizeChip(prize, large: true),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          const Text(
+                            '🛡 Garanti: ',
+                            style: TextStyle(color: K.w40, fontSize: 11),
+                          ),
+                          Text(
+                            _guarantee(),
+                            style: const TextStyle(
+                              color: K.correct,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Jokers
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                  child: Row(
+                    children: [
+                      const Text('🃏', style: TextStyle(fontSize: 14)),
+                      const SizedBox(width: 8),
+                      const GoldText(
+                        'JOKERLER',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 2.5,
+                        ),
+                      ),
+                      if (highLevel) ...[
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: Colors.orange.withOpacity(0.3),
+                            ),
+                          ),
+                          child: const Text(
+                            '📺 Reklamlı',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.orange,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                Container(height: 1, color: K.w10),
+
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.all(12),
+                    children: [
+                      _dItem(
+                        '✂️',
+                        'Yarı Yarıya',
+                        'İki yanlış şık elenir',
+                        l50,
+                        K.gold2,
+                        l50
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _use50();
+                              },
+                      ),
+                      _dItem(
+                        '👥',
+                        'Seyirciye Sor',
+                        'Seyirci oy dağılımı',
+                        lAud,
+                        K.gold2,
+                        lAud
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _useAud();
+                              },
+                      ),
+                      _dItem(
+                        '📞',
+                        'Telefon',
+                        'Arkadaşa sor',
+                        lPhone,
+                        K.cyan,
+                        lPhone
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _usePhone();
+                              },
+                      ),
+                      _dItem(
+                        '🎯',
+                        'Çift Cevap',
+                        'İki cevap (baraj+)',
+                        lDip || step < lvl.checkpoints.last,
+                        Colors.pinkAccent,
+                        (lDip || step < lvl.checkpoints.last)
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _useDip();
+                              },
+                      ),
+                      _dItem(
+                        '⏰',
+                        'Ekstra Süre',
+                        '+15 saniye',
+                        lTime,
+                        Colors.tealAccent,
+                        lTime
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _useTime();
+                              },
+                      ),
+                      _dItem(
+                        '🔄',
+                        'Soru Değiştir',
+                        'Başka soru alın',
+                        lSwap,
+                        Colors.orange,
+                        lSwap
+                            ? null
+                            : () {
+                                Navigator.pop(context);
+                                _useSwap();
+                              },
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Withdraw button
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: const BoxDecoration(
+                    border: Border(top: BorderSide(color: K.w10, width: 1)),
+                  ),
+                  child: GestureDetector(
+                    onTap: () {
+                      Navigator.pop(context);
+                      _giveUp();
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        gradient: LinearGradient(
+                          colors: [
+                            K.wrong.withOpacity(0.85),
+                            K.wrongBg.withOpacity(0.5),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: K.wrong.withOpacity(0.4),
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: K.wrong.withOpacity(0.25),
+                            blurRadius: 18,
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.logout_rounded,
+                                color: Colors.white70,
+                                size: 17,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'ÇEKİL',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2.5,
+                                  color: Colors.white,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Kazanç: ${_guarantee(step > 0 ? step - 1 : 0)}',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.white54,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  Widget _dItem(
+    String em,
+    String lbl,
+    String sub,
+    bool used,
+    Color col,
+    VoidCallback? onTap,
+  ) => Padding(
+    padding: const EdgeInsets.only(bottom: 9),
+    child: GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 220),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          gradient: used
+              ? null
+              : LinearGradient(
+                  colors: [col.withOpacity(0.11), col.withOpacity(0.03)],
+                ),
+          color: used ? K.w05 : null,
+          border: Border.all(
+            color: used ? K.w10 : col.withOpacity(0.32),
+            width: used ? 0.5 : 1,
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(11),
+                color: used ? K.w05 : col.withOpacity(0.14),
+              ),
+              alignment: Alignment.center,
+              child: Text(em, style: const TextStyle(fontSize: 20)),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    lbl,
+                    style: TextStyle(
+                      color: used ? K.w20 : K.w100,
+                      fontWeight: FontWeight.w600,
+                      fontSize: 14,
+                    ),
+                  ),
+                  Text(
+                    sub,
+                    style: TextStyle(color: used ? K.w10 : K.w40, fontSize: 11),
+                  ),
+                ],
+              ),
+            ),
+            used
+                ? const Icon(
+                    Icons.check_circle_outline,
+                    color: K.correct,
+                    size: 18,
+                  )
+                : Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: col.withOpacity(0.4),
+                    size: 13,
+                  ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DATA
+// ═══════════════════════════════════════════════════════════════════
+class _LI {
+  final String emoji, label;
+  final bool used;
+  final Color color;
+  final VoidCallback onTap;
+  const _LI(this.emoji, this.label, this.used, this.color, this.onTap);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DIALOGS
+// ═══════════════════════════════════════════════════════════════════
+
+Widget _glassDlg({required Widget child, required Color borderColor}) => Dialog(
+  backgroundColor: Colors.transparent,
+  child: ClipRRect(
+    borderRadius: BorderRadius.circular(26),
+    child: BackdropFilter(
+      filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+      child: Container(
+        padding: const EdgeInsets.all(28),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(26),
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [K.panelLight, K.panel, K.navy],
+            stops: [0.0, 0.5, 1.0],
+          ),
+          border: Border.all(color: borderColor.withOpacity(0.6), width: 1.5),
+          boxShadow: [
+            BoxShadow(color: borderColor.withOpacity(0.25), blurRadius: 40),
+            BoxShadow(color: borderColor.withOpacity(0.10), blurRadius: 80),
+          ],
+        ),
+        child: child,
+      ),
+    ),
+  ),
+);
+
+Widget _goldBtn(String label, VoidCallback onTap) => GestureDetector(
+  onTap: onTap,
+  child: Container(
+    padding: const EdgeInsets.symmetric(vertical: 15),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(13),
+      gradient: const LinearGradient(colors: [K.gold1, K.gold2, K.gold3]),
+      boxShadow: [BoxShadow(color: K.goldShadow, blurRadius: 22)],
+    ),
+    alignment: Alignment.center,
+    child: Text(
+      label,
+      style: const TextStyle(
+        fontWeight: FontWeight.w900,
+        color: K.gold4,
+        fontSize: 15,
+        letterSpacing: 2,
+      ),
+    ),
+  ),
+);
+
+Widget _ghostBtn(String label, VoidCallback onTap) => GestureDetector(
+  onTap: onTap,
+  child: Container(
+    padding: const EdgeInsets.symmetric(vertical: 15),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(13),
+      color: K.w05,
+      border: Border.all(color: K.w20, width: 1),
+    ),
+    alignment: Alignment.center,
+    child: Text(
+      label,
+      style: const TextStyle(color: K.w60, fontWeight: FontWeight.w600),
+    ),
+  ),
+);
+
+class _LifelineDialog extends StatelessWidget {
+  final String name, emoji, desc;
+  final bool highLevel;
+  final VoidCallback onConfirm, onCancel;
+  const _LifelineDialog({
+    required this.name,
+    required this.emoji,
+    required this.desc,
+    required this.highLevel,
+    required this.onConfirm,
+    required this.onCancel,
+  });
+
+  @override
+  Widget build(BuildContext context) => _glassDlg(
+    borderColor: K.gold2,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(emoji, style: const TextStyle(fontSize: 56)),
+        const SizedBox(height: 10),
+        GoldText(
+          name,
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          desc,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: K.w80, fontSize: 15, height: 1.5),
+        ),
+        if (highLevel) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: Colors.orange.withOpacity(0.3)),
+            ),
+            child: const Text(
+              '📺 Kısa reklam izlemeniz gerekecek',
+              style: TextStyle(color: Colors.orange, fontSize: 13),
+            ),
+          ),
+        ],
+        const SizedBox(height: 24),
+        Row(
+          children: [
+            Expanded(child: _ghostBtn('Vazgeç', onCancel)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _goldBtn(highLevel ? 'Reklam İzle' : 'Kullan', onConfirm),
+            ),
+          ],
+        ),
+      ],
+    ),
+  );
+}
+
+class _AudienceDialog extends StatelessWidget {
+  final List<MapEntry<String, int>> votes;
+  final String correctLabel;
+  const _AudienceDialog({required this.votes, required this.correctLabel});
+
+  @override
+  Widget build(BuildContext context) => _glassDlg(
+    borderColor: K.cyan,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const GoldText(
+          '👥 Seyirci Oyları',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 20),
+        ...votes.map((e) {
+          final isC = e.key == correctLabel;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          e.key,
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                            color: isC ? K.correct : K.w80,
+                          ),
+                        ),
+                        if (isC) ...[
+                          const SizedBox(width: 7),
+                          Dot(color: K.correct, size: 6),
+                        ],
+                      ],
+                    ),
+                    Text(
+                      '%${e.value}',
+                      style: TextStyle(
+                        color: isC ? K.correct : K.w60,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Stack(
+                    children: [
+                      Container(height: 12, color: K.w10),
+                      FractionallySizedBox(
+                        widthFactor: e.value / 100.0,
+                        child: Container(
+                          height: 12,
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              colors: isC
+                                  ? [K.correct, K.correctBg]
+                                  : [K.blue, K.cyanDeep],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: (isC ? K.correct : K.blue).withOpacity(
+                                  0.45,
+                                ),
+                                blurRadius: 8,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+        const SizedBox(height: 8),
+        _goldBtn('Kapat', () => Navigator.pop(context)),
+      ],
+    ),
+  );
+}
+
+class _PhoneDialog extends StatelessWidget {
+  final String answer;
+  final int confidence;
+  const _PhoneDialog({required this.answer, required this.confidence});
+
+  @override
+  Widget build(BuildContext context) => _glassDlg(
+    borderColor: K.cyan,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const GoldText(
+          '📞 Telefon Jokeri',
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900),
+        ),
+        const SizedBox(height: 18),
+        GlassBox(
+          borderColor: K.cyan,
+          radius: 16,
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            children: [
+              const Text(
+                'Arkadaşınız diyor ki:',
+                style: TextStyle(color: K.w60, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '"$answer cevabı olduğundan %$confidence eminim!"',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: K.w100,
+                  fontSize: 17,
+                  fontStyle: FontStyle.italic,
+                  height: 1.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 20),
+        _goldBtn('Teşekkürler!', () => Navigator.pop(context)),
+      ],
+    ),
+  );
+}
+
+class _LevelUpDialog extends StatefulWidget {
+  final Level next;
+  const _LevelUpDialog({required this.next});
+  @override
+  State<_LevelUpDialog> createState() => _LevelUpDialogState();
+}
+
+class _LevelUpDialogState extends State<_LevelUpDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1400),
+  )..repeat(reverse: true);
+  late final Animation<double> _bounce = Tween(
+    begin: 0.92,
+    end: 1.08,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.elasticInOut));
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _c,
+    builder: (_, __) => Dialog(
+      backgroundColor: Colors.transparent,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: Container(
+            padding: const EdgeInsets.all(32),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [widget.next.color.withOpacity(0.22), K.panel, K.navy],
+              ),
+              border: Border.all(
+                color: widget.next.color.withOpacity(
+                  0.7 * _bounce.value / 1.08,
+                ),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: widget.next.color.withOpacity(
+                    0.45 * _bounce.value / 1.08,
+                  ),
+                  blurRadius: 50 * _bounce.value / 1.08,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Multiple coins raining
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    GoldCoin(
+                      size: 28,
+                      delay: const Duration(milliseconds: 100),
+                    ),
+                    const SizedBox(width: 12),
+                    GoldCoin(size: 36),
+                    const SizedBox(width: 12),
+                    GoldCoin(
+                      size: 28,
+                      delay: const Duration(milliseconds: 200),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'SEVİYE ATLIYOR!',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: widget.next.glow,
+                    letterSpacing: 3,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${widget.next.name} başlıyor!',
+                  style: const TextStyle(color: K.w60, fontSize: 15),
+                ),
+                const SizedBox(height: 24),
+                // Animated progress bar
+                Container(
+                  height: 4,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(2),
+                    color: K.w10,
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(2),
+                    child: LinearProgressIndicator(
+                      backgroundColor: Colors.transparent,
+                      valueColor: AlwaysStoppedAnimation(widget.next.color),
+                      minHeight: 4,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Hazırlanıyor...',
+                  style: const TextStyle(
+                    color: K.w20,
+                    fontSize: 11,
+                    letterSpacing: 2.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _EndDialog extends StatefulWidget {
+  final bool win;
+  final String msg;
+  final VoidCallback onRetry, onExit;
+  const _EndDialog({
+    required this.win,
+    required this.msg,
+    required this.onRetry,
+    required this.onExit,
+  });
+  @override
+  State<_EndDialog> createState() => _EndDialogState();
+}
+
+class _EndDialogState extends State<_EndDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 2200),
+  )..repeat(reverse: true);
+  late final Animation<double> _pulse = Tween(
+    begin: 0.5,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut));
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _pulse,
+    builder: (_, __) => Dialog(
+      backgroundColor: Colors.transparent,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(28),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+          child: Container(
+            padding: const EdgeInsets.all(30),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: widget.win
+                    ? [const Color(0xFF072018), K.panel]
+                    : [const Color(0xFF200707), K.panel],
+              ),
+              border: Border.all(
+                color: (widget.win ? K.correct : K.wrong).withOpacity(
+                  0.55 * _pulse.value + 0.3,
+                ),
+                width: 1.5,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: (widget.win ? K.correct : K.wrong).withOpacity(
+                    0.35 * _pulse.value,
+                  ),
+                  blurRadius: 60 * _pulse.value,
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Trophy or coins on win
+                if (widget.win)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      GoldCoin(
+                        size: 30,
+                        delay: const Duration(milliseconds: 200),
+                      ),
+                      const SizedBox(width: 6),
+                      const Text('🏆', style: TextStyle(fontSize: 68)),
+                      const SizedBox(width: 6),
+                      GoldCoin(
+                        size: 30,
+                        delay: const Duration(milliseconds: 450),
+                      ),
+                    ],
+                  )
+                else
+                  const Text('💔', style: TextStyle(fontSize: 70)),
+
+                const SizedBox(height: 14),
+
+                Text(
+                  widget.win ? 'TEBRİKLER!' : 'OYUN BİTTİ',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    color: widget.win ? K.correct : K.wrong,
+                    letterSpacing: 3,
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // Prize display on win
+                if (widget.win)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: PrizeChip(
+                      widget.msg.replaceAll('kazandınız!', '').trim(),
+                      large: true,
+                    ),
+                  )
+                else
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      color: K.w05,
+                      border: Border.all(color: K.w10),
+                    ),
+                    child: Text(
+                      widget.msg,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: K.w80,
+                        fontSize: 16,
+                        height: 1.5,
+                      ),
+                    ),
+                  ),
+
+                const SizedBox(height: 22),
+                Row(
+                  children: [
+                    Expanded(child: _ghostBtn('Çıkış', widget.onExit)),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      flex: 2,
+                      child: GestureDetector(
+                        onTap: widget.onRetry,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(13),
+                            gradient: const LinearGradient(
+                              colors: [K.gold1, K.gold2, K.gold3],
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: K.goldShadow.withOpacity(_pulse.value),
+                                blurRadius: 24,
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.refresh_rounded,
+                                color: K.gold4,
+                                size: 20,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                'Tekrar Oyna',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  color: K.gold4,
+                                  fontSize: 15,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
