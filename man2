@@ -1,3 +1,5 @@
+// ignore_for_file: unused_element
+
 import 'dart:ui';
 import 'dart:math';
 import 'dart:async';
@@ -52,6 +54,7 @@ class K {
   static const cyanDeep = Color(0xFF006064);
   static const blue = Color(0xFF2979FF);
   static const violet = Color(0xFFD500F9);
+  static const pink = Color(0xFFFF4081);
 
   static const correct = Color(0xFF00E676);
   static const correctBg = Color(0xFF00251A);
@@ -60,6 +63,9 @@ class K {
   static const select = Color(0xFFFF8F00);
   static const selectBg = Color(0xFF1A0E00);
   static const locked = Color(0xFFAA00FF);
+
+  static const premium = Color(0xFFFFD700);
+  static const premiumBg = Color(0xFF1A1500);
 
   static const w100 = Color(0xFFFFFFFF);
   static const w80 = Color(0xCCFFFFFF);
@@ -139,6 +145,15 @@ class Level {
 }
 
 // ══════════════════════════════════════════════
+//  PREMIUM TIERS
+// ══════════════════════════════════════════════
+class PremiumTier {
+  static const basic = 'basic';
+  static const pro = 'pro';
+  static const vip = 'vip';
+}
+
+// ══════════════════════════════════════════════
 //  PAINTERS
 // ══════════════════════════════════════════════
 class BeamPainter extends CustomPainter {
@@ -192,6 +207,42 @@ class ScanlinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(ScanlinePainter o) => o.opacity != opacity;
+}
+
+class ParticlePainter extends CustomPainter {
+  final List<_Particle> particles;
+  const ParticlePainter(this.particles);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final p in particles) {
+      final paint = Paint()
+        ..color = p.color.withOpacity(p.opacity)
+        ..style = PaintingStyle.fill;
+      canvas.drawCircle(
+        Offset(p.x * size.width, p.y * size.height),
+        p.size,
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(ParticlePainter o) => true;
+}
+
+class _Particle {
+  double x, y, vx, vy, size, opacity;
+  Color color;
+  _Particle({
+    required this.x,
+    required this.y,
+    required this.vx,
+    required this.vy,
+    required this.size,
+    required this.opacity,
+    required this.color,
+  });
 }
 
 // ══════════════════════════════════════════════
@@ -450,6 +501,39 @@ class PrizeChip extends StatelessWidget {
   );
 }
 
+class PremiumBadge extends StatelessWidget {
+  final String tier;
+  const PremiumBadge(this.tier, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, colors) = switch (tier) {
+      PremiumTier.vip => ('👑 VIP', [K.gold1, K.gold3]),
+      PremiumTier.pro => ('⭐ PRO', [K.cyan, K.violet]),
+      _ => ('✓ BASIC', [K.correct, K.cyanDeep]),
+    };
+    return ShaderMask(
+      shaderCallback: (b) => LinearGradient(colors: colors).createShader(b),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: colors.first.withOpacity(0.5), width: 1),
+        ),
+        child: Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            color: Colors.white,
+            letterSpacing: 1.5,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 // ══════════════════════════════════════════════
 //  SHARED DIALOG HELPERS
 // ══════════════════════════════════════════════
@@ -520,6 +604,40 @@ Widget ghostBtn(String label, VoidCallback onTap) => GestureDetector(
   ),
 );
 
+Widget cyanBtn(String label, VoidCallback onTap, {IconData? icon}) =>
+    GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          gradient: const LinearGradient(colors: [K.cyan, K.violet]),
+          boxShadow: [
+            BoxShadow(color: K.cyan.withOpacity(0.4), blurRadius: 22),
+          ],
+        ),
+        alignment: Alignment.center,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+            ],
+            Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.w900,
+                color: Colors.white,
+                fontSize: 15,
+                letterSpacing: 2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+
 // ══════════════════════════════════════════════
 //  APP ROOT
 // ══════════════════════════════════════════════
@@ -528,7 +646,7 @@ class MilyonerApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: '5 Milyonluk Soru Yarışı',
+    title: 'MilyonerSen - Canlı Bilgi Yarışması',
     debugShowCheckedModeBanner: false,
     theme: ThemeData(
       brightness: Brightness.dark,
@@ -628,6 +746,95 @@ class FirebaseService {
     await _auth.signOut();
   }
 
+  // ─── HESAP SİLME (Google Play zorunlu) ──────
+  static Future<String?> deleteAccount() async {
+    if (uid == null) return 'Kullanıcı bulunamadı.';
+    try {
+      final u = _auth.currentUser!;
+      // Firestore verisini sil
+      final batch = _db.batch();
+      batch.delete(_db.collection('users').doc(uid));
+      // Duel queue'dan temizle
+      batch.delete(_db.collection('duel_queue').doc(uid));
+      await batch.commit();
+      // Firebase Auth'dan sil
+      await u.delete();
+      await _google.signOut().catchError((_) {});
+      return null; // başarı
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'requires-recent-login') {
+        return 'Hesabı silmek için tekrar giriş yapmanız gerekiyor.';
+      }
+      return _parseError(e);
+    } catch (e) {
+      return 'Hesap silinemedi: $e';
+    }
+  }
+
+  // ─── KULLANICI ENGELLEME ─────────────────────
+  static Future<void> blockUser(String targetUid) async {
+    if (uid == null) return;
+    try {
+      await _db
+          .collection('users')
+          .doc(uid)
+          .collection('blocked')
+          .doc(targetUid)
+          .set({
+            'blockedAt': FieldValue.serverTimestamp(),
+            'targetUid': targetUid,
+          });
+    } catch (e) {
+      debugPrint('🔴 [BLOCK] $e');
+    }
+  }
+
+  // ─── ŞİKAYET ET ─────────────────────────────
+  static Future<void> reportUser({
+    required String targetUid,
+    required String targetName,
+    required String reason,
+    String? context,
+  }) async {
+    if (uid == null) return;
+    try {
+      await _db.collection('reports').add({
+        'reporterUid': uid,
+        'targetUid': targetUid,
+        'targetName': targetName,
+        'reason': reason,
+        'context': context ?? '',
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('🔴 [REPORT] $e');
+    }
+  }
+
+  static Future<void> reportMessage({
+    required String duelId,
+    required String messageText,
+    required String fromUid,
+    required String fromName,
+  }) async {
+    if (uid == null) return;
+    try {
+      await _db.collection('reports').add({
+        'reporterUid': uid,
+        'targetUid': fromUid,
+        'targetName': fromName,
+        'reason': 'inappropriate_message',
+        'context': messageText,
+        'duelId': duelId,
+        'status': 'pending',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      debugPrint('🔴 [REPORT_MSG] $e');
+    }
+  }
+
   static String _parseError(Object err) {
     if (err is FirebaseAuthException) {
       switch (err.code) {
@@ -667,14 +874,24 @@ class FirebaseService {
           'email': u.email ?? '',
           'photoUrl': u.photoURL ?? '',
           'xp': 0,
-          'coins': 100,
+          'coins': 200,
+          'level': 1,
           'totalCorrect': 0,
           'totalGames': 0,
+          'totalQuestions': 0,
+          'winStreak': 0,
+          'bestStreak': 0,
           'duelsWon': 0,
           'duelsLost': 0,
+          'duelsDraw': 0,
           'bestPrize': '0',
           'isGuest': u.isAnonymous,
           'isPremium': false,
+          'premiumTier': null,
+          'premiumExpiry': null,
+          'achievements': <String>[],
+          'titles': <String>['Acemi'],
+          'activeTitle': 'Acemi',
           'createdAt': FieldValue.serverTimestamp(),
           'lastLogin': FieldValue.serverTimestamp(),
         });
@@ -727,11 +944,12 @@ class FirebaseService {
 
   static Future<List<Map<String, dynamic>>> getLeaderboard({
     int limit = 50,
+    String orderBy = 'xp',
   }) async {
     try {
       final s = await _db
           .collection('users')
-          .orderBy('xp', descending: true)
+          .orderBy(orderBy, descending: true)
           .limit(limit)
           .get()
           .timeout(const Duration(seconds: 10));
@@ -741,29 +959,37 @@ class FirebaseService {
     }
   }
 
+  // ─── MATCHMAKING ─────────────────────────────
   static Future<String?> findOrCreateMatch(String roomKey) async {
     if (uid == null) return null;
     final me = await getProfile();
     if (me == null) return null;
     final queueRef = _db.collection('duel_queue');
     final duelsRef = _db.collection('duels');
+
     try {
+      await queueRef.doc(uid).delete().catchError((_) {});
+
       final waiting = await queueRef
           .where('roomKey', isEqualTo: roomKey)
           .where('status', isEqualTo: 'waiting')
           .limit(10)
           .get()
           .timeout(const Duration(seconds: 8));
+
       final candidate = waiting.docs.where((d) => d.id != uid).toList();
+
       if (candidate.isNotEmpty) {
         final oppDoc = candidate.first;
         String? duelId;
+
         await _db.runTransaction((tx) async {
           final fresh = await tx.get(oppDoc.reference);
           if (!fresh.exists || fresh.data()?['status'] != 'waiting') return;
           final oppData = fresh.data()!;
           final duelRef = duelsRef.doc();
           duelId = duelRef.id;
+
           tx.set(duelRef, {
             'roomKey': roomKey,
             'mode': 'auto',
@@ -773,37 +999,47 @@ class FirebaseService {
               'uid': oppData['uid'],
               'name': oppData['name'],
               'xp': oppData['xp'] ?? 0,
+              'isPremium': oppData['isPremium'] ?? false,
+              'premiumTier': oppData['premiumTier'],
+              'activeTitle': oppData['activeTitle'] ?? '',
               'score': 0,
               'answers': <Map<String, dynamic>>[],
               'finished': false,
+              'rewardClaimed': false,
             },
             'player2': {
               'uid': uid,
               'name': me['name'],
               'xp': me['xp'] ?? 0,
+              'isPremium': me['isPremium'] ?? false,
+              'premiumTier': me['premiumTier'],
+              'activeTitle': me['activeTitle'] ?? '',
               'score': 0,
               'answers': <Map<String, dynamic>>[],
               'finished': false,
+              'rewardClaimed': false,
             },
             'questions': <Map<String, dynamic>>[],
             'winnerUid': null,
           });
+
           tx.update(oppDoc.reference, {'status': 'matched', 'duelId': duelId});
         });
-        if (duelId != null) {
-          await _cleanMyQueue();
-          return duelId;
-        }
+
+        if (duelId != null) return duelId;
       }
+
       await queueRef.doc(uid).set({
         'uid': uid,
         'name': me['name'],
         'xp': me['xp'] ?? 0,
+        'isPremium': me['isPremium'] ?? false,
         'roomKey': roomKey,
         'status': 'waiting',
         'duelId': null,
         'createdAt': FieldValue.serverTimestamp(),
       });
+
       return null;
     } catch (e) {
       debugPrint('🔴 [MATCHMAKING] $e');
@@ -814,14 +1050,12 @@ class FirebaseService {
   static Stream<DocumentSnapshot<Map<String, dynamic>>> watchMyQueueDoc() =>
       _db.collection('duel_queue').doc(uid).snapshots();
 
-  static Future<void> _cleanMyQueue() async {
+  static Future<void> cancelMatchmaking() async {
     if (uid == null) return;
     try {
       await _db.collection('duel_queue').doc(uid).delete();
     } catch (_) {}
   }
-
-  static Future<void> cancelMatchmaking() => _cleanMyQueue();
 
   static Future<String?> createDuel(String roomKey) async {
     if (uid == null) return null;
@@ -837,9 +1071,13 @@ class FirebaseService {
           'uid': uid,
           'name': me['name'],
           'xp': me['xp'] ?? 0,
+          'isPremium': me['isPremium'] ?? false,
+          'premiumTier': me['premiumTier'],
+          'activeTitle': me['activeTitle'] ?? '',
           'score': 0,
           'answers': <Map<String, dynamic>>[],
           'finished': false,
+          'rewardClaimed': false,
         },
         'player2': null,
         'questions': <Map<String, dynamic>>[],
@@ -868,9 +1106,13 @@ class FirebaseService {
           'uid': uid,
           'name': me['name'],
           'xp': me['xp'] ?? 0,
+          'isPremium': me['isPremium'] ?? false,
+          'premiumTier': me['premiumTier'],
+          'activeTitle': me['activeTitle'] ?? '',
           'score': 0,
           'answers': <Map<String, dynamic>>[],
           'finished': false,
+          'rewardClaimed': false,
         },
       });
       return true;
@@ -920,9 +1162,13 @@ class FirebaseService {
           'uid': uid,
           'name': me['name'],
           'xp': me['xp'] ?? 0,
+          'isPremium': me['isPremium'] ?? false,
+          'premiumTier': me['premiumTier'],
+          'activeTitle': me['activeTitle'] ?? '',
           'score': 0,
           'answers': <Map<String, dynamic>>[],
           'finished': false,
+          'rewardClaimed': false,
         },
         'player2': null,
         'questions': <Map<String, dynamic>>[],
@@ -954,10 +1200,11 @@ class FirebaseService {
 
   static Future<bool> acceptInvite(String inviteId, String duelId) async {
     final ok = await joinDuelByCode(duelId);
-    if (ok)
+    if (ok) {
       await _db.collection('duel_invites').doc(inviteId).update({
         'status': 'accepted',
       });
+    }
     return ok;
   }
 
@@ -983,7 +1230,9 @@ class FirebaseService {
         'status': 'active',
         'startedAt': FieldValue.serverTimestamp(),
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [SET_QUESTIONS] $e');
+    }
   }
 
   static Future<void> submitAnswer({
@@ -1021,7 +1270,9 @@ class FirebaseService {
       await _db.collection('duels').doc(duelId).update({
         '$playerKey.finished': true,
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [MARK_FINISHED] $e');
+    }
   }
 
   static Future<void> finishDuelWithResult(
@@ -1053,7 +1304,7 @@ class FirebaseService {
       final snap = await duelRef.get();
       final data = snap.data();
       if (data == null) return;
-      final already = (data['$playerKey']?['rewardClaimed'] ?? false) as bool;
+      final already = (data[playerKey]?['rewardClaimed'] ?? false) as bool;
       if (already) return;
       await duelRef.update({'$playerKey.rewardClaimed': true});
       final isWin = winnerUid == uid;
@@ -1062,25 +1313,84 @@ class FirebaseService {
       await _db.collection('users').doc(uid!).update({
         if (isWin) 'duelsWon': FieldValue.increment(1),
         if (!isWin && !isDraw) 'duelsLost': FieldValue.increment(1),
+        if (isDraw) 'duelsDraw': FieldValue.increment(1),
         'xp': FieldValue.increment(xpGain),
         if (isWin) 'coins': FieldValue.increment(50),
+        'winStreak': isWin ? FieldValue.increment(1) : 0,
       });
+      _checkAchievements(isWin: isWin, isDraw: isDraw);
     } catch (e) {
       debugPrint('🔴 [CLAIM_REWARD] $e');
     }
   }
 
+  static Future<void> _checkAchievements({
+    required bool isWin,
+    required bool isDraw,
+  }) async {
+    if (uid == null) return;
+    try {
+      final snap = await _db.collection('users').doc(uid!).get();
+      final data = snap.data();
+      if (data == null) return;
+      final won = (data['duelsWon'] ?? 0) as int;
+      final streak = (data['winStreak'] ?? 0) as int;
+      final achievements = List<String>.from(data['achievements'] ?? []);
+      final newAch = <String>[];
+      if (won >= 1 && !achievements.contains('first_win'))
+        newAch.add('first_win');
+      if (won >= 10 && !achievements.contains('ten_wins'))
+        newAch.add('ten_wins');
+      if (won >= 50 && !achievements.contains('fifty_wins'))
+        newAch.add('fifty_wins');
+      if (streak >= 5 && !achievements.contains('streak_5'))
+        newAch.add('streak_5');
+      if (streak > (data['bestStreak'] ?? 0)) {
+        await _db.collection('users').doc(uid!).update({'bestStreak': streak});
+      }
+      if (newAch.isNotEmpty) {
+        await _db.collection('users').doc(uid!).update({
+          'achievements': FieldValue.arrayUnion(newAch),
+        });
+      }
+    } catch (_) {}
+  }
+
   static Future<void> updateStats({
     required bool won,
     required String bestPrize,
+    required int correctCount,
+    required int totalCount,
   }) async {
     if (uid == null) return;
     try {
       await _db.collection('users').doc(uid!).update({
         'totalGames': FieldValue.increment(1),
+        'totalCorrect': FieldValue.increment(correctCount),
+        'totalQuestions': FieldValue.increment(totalCount),
         if (won) 'xp': FieldValue.increment(100),
         'bestPrize': bestPrize,
       });
+    } catch (_) {}
+  }
+
+  static Future<void> upgradeToPremium(String tier) async {
+    if (uid == null) return;
+    try {
+      await _db.collection('users').doc(uid!).update({
+        'isPremium': true,
+        'premiumTier': tier,
+        'premiumExpiry': Timestamp.fromDate(
+          DateTime.now().add(const Duration(days: 30)),
+        ),
+      });
+    } catch (_) {}
+  }
+
+  static Future<void> updateTitle(String title) async {
+    if (uid == null) return;
+    try {
+      await _db.collection('users').doc(uid!).update({'activeTitle': title});
     } catch (_) {}
   }
 }
@@ -1160,6 +1470,25 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
       Navigator.push(
         context,
         MaterialPageRoute(builder: (_) => const DuelLobbyScreen()),
+      );
+    } else {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
+    }
+  }
+
+  void _goToLeaderboard() => Navigator.push(
+    context,
+    MaterialPageRoute(builder: (_) => const LeaderboardScreen()),
+  );
+
+  void _goToProfile() {
+    if (FirebaseService.user != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const ProfileScreen()),
       );
     } else {
       Navigator.push(
@@ -1252,6 +1581,28 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
             SafeArea(
               child: Column(
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                    child: Opacity(
+                      opacity: _btnsIn.value,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          _IconBtn(
+                            icon: Icons.leaderboard_rounded,
+                            color: K.gold2,
+                            onTap: _goToLeaderboard,
+                          ),
+                          const SizedBox(width: 8),
+                          _IconBtn(
+                            icon: Icons.person_rounded,
+                            color: K.cyan,
+                            onTap: _goToProfile,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                   Expanded(
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
@@ -1336,16 +1687,37 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
                               ),
                             ),
                             const SizedBox(height: 12),
-                            _PressBtn(
-                              label: 'NASIL OYNANIR?',
-                              icon: Icons.help_outline_rounded,
-                              isPrimary: false,
-                              onTap: () => showModalBottomSheet(
-                                context: context,
-                                isScrollControlled: true,
-                                backgroundColor: Colors.transparent,
-                                builder: (_) => const _HowToPlay(),
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _PressBtn(
+                                    label: 'NASIL OYNANIR?',
+                                    icon: Icons.help_outline_rounded,
+                                    isPrimary: false,
+                                    onTap: () => showModalBottomSheet(
+                                      context: context,
+                                      isScrollControlled: true,
+                                      backgroundColor: Colors.transparent,
+                                      builder: (_) => const _HowToPlay(),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _PressBtn(
+                                    label: 'PREMIUM',
+                                    icon: Icons.workspace_premium_rounded,
+                                    isPrimary: false,
+                                    isPremium: true,
+                                    onTap: () => Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => const PremiumScreen(),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -1547,16 +1919,44 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
   );
 }
 
+class _IconBtn extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+  const _IconBtn({
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: color.withOpacity(0.12),
+        border: Border.all(color: color.withOpacity(0.4), width: 1),
+      ),
+      child: Icon(icon, color: color, size: 20),
+    ),
+  );
+}
+
 class _PressBtn extends StatefulWidget {
   final String label;
   final IconData icon;
   final bool isPrimary;
+  final bool isPremium;
   final VoidCallback onTap;
   const _PressBtn({
     required this.label,
     required this.icon,
     required this.isPrimary,
     required this.onTap,
+    this.isPremium = false,
   });
   @override
   State<_PressBtn> createState() => _PressBtnState();
@@ -1588,7 +1988,9 @@ class _PressBtnState extends State<_PressBtn>
     onTapCancel: () => _c.reverse(),
     child: ScaleTransition(
       scale: _s,
-      child: widget.isPrimary ? _primary() : _secondary(),
+      child: widget.isPrimary
+          ? _primary()
+          : (widget.isPremium ? _premiumBtn() : _secondary()),
     ),
   );
 
@@ -1655,6 +2057,37 @@ class _PressBtnState extends State<_PressBtn>
       ],
     ),
   );
+
+  Widget _premiumBtn() => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 17),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(16),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [K.gold4.withOpacity(0.3), K.premiumBg],
+      ),
+      border: Border.all(color: K.gold2.withOpacity(0.5), width: 1),
+      boxShadow: [BoxShadow(color: K.gold2.withOpacity(0.2), blurRadius: 16)],
+    ),
+    child: Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(widget.icon, color: K.gold2, size: 22),
+        const SizedBox(width: 10),
+        Text(
+          widget.label,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+            color: K.gold2,
+            letterSpacing: 2.5,
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 class _HowToPlay extends StatelessWidget {
@@ -1669,6 +2102,7 @@ class _HowToPlay extends StatelessWidget {
       ('📺', 'Bölüm 2-3\'te joker için kısa reklam izlenir'),
       ('🚪', 'İstediğiniz an çekilip garantili ödülü alabilirsiniz'),
       ('⚔️', 'Canlı Düello modunda gerçek rakiplerle yarışın'),
+      ('👑', 'Premium üyelikle reklamsız oynayın ve ekstra joker kazanın'),
     ];
     return ClipRRect(
       borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
@@ -1769,6 +2203,1327 @@ class _HowToPlay extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════
+//  PREMIUM SCREEN
+// ══════════════════════════════════════════════
+class PremiumScreen extends StatefulWidget {
+  const PremiumScreen({super.key});
+  @override
+  State<PremiumScreen> createState() => _PremiumScreenState();
+}
+
+class _PremiumScreenState extends State<PremiumScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 3),
+  )..repeat(reverse: true);
+  late final Animation<double> _glow = Tween(
+    begin: 0.5,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut));
+  int _selected = 1;
+  bool _loading = false;
+
+  static const tiers = [
+    (
+      PremiumTier.basic,
+      'BASIC',
+      '29,99 ₺/ay',
+      K.correct,
+      ['Reklamsız oyun', '2x XP kazanma', 'Özel başlık', 'Öncelikli eşleşme'],
+    ),
+    (
+      PremiumTier.pro,
+      'PRO ⭐',
+      '59,99 ₺/ay',
+      K.cyan,
+      [
+        'Reklamsız oyun',
+        '3x XP kazanma',
+        'Tüm özel başlıklar',
+        'Öncelikli eşleşme',
+        'Ekstra joker hakları',
+        'Aylık 500 coin',
+      ],
+    ),
+    (
+      PremiumTier.vip,
+      'VIP 👑',
+      '99,99 ₺/ay',
+      K.gold2,
+      [
+        'Tüm PRO özellikler',
+        '5x XP kazanma',
+        'VIP rozeti',
+        'Aylık 2000 coin',
+        'Özel VIP odaları',
+        'Öncelikli destek',
+        'Joker reset (günlük)',
+      ],
+    ),
+  ];
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  Future<void> _purchase(String tier) async {
+    if (FirebaseService.uid == null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => const AuthScreen()),
+      );
+      return;
+    }
+    setState(() => _loading = true);
+    await FirebaseService.upgradeToPremium(tier);
+    if (mounted) {
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${tiers[_selected].$2} aktivasyonu başarılı! 🎉'),
+          backgroundColor: K.correct,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          margin: const EdgeInsets.all(14),
+        ),
+      );
+      Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) => Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [K.navy, K.ink, K.inkDeep],
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: CustomPaint(
+                painter: BeamPainter(K.gold2, 0.4 + 0.6 * _glow.value),
+              ),
+            ),
+            Positioned.fill(child: CustomPaint(painter: ScanlinePainter(1.0))),
+            SafeArea(
+              child: Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 8, 16, 16),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: K.w80,
+                            size: 20,
+                          ),
+                          onPressed: () => Navigator.pop(context),
+                        ),
+                        const Expanded(
+                          child: Center(
+                            child: GoldText(
+                              '👑 PREMIUM ÜYELİK',
+                              style: TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 48),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: GlassBox(
+                      borderColor: K.gold2,
+                      radius: 18,
+                      padding: const EdgeInsets.all(18),
+                      child: Column(
+                        children: [
+                          AnimatedBuilder(
+                            animation: _glow,
+                            builder: (_, __) => Text(
+                              '👑',
+                              style: TextStyle(
+                                fontSize: 52,
+                                shadows: [
+                                  Shadow(
+                                    color: K.gold2.withOpacity(
+                                      0.8 * _glow.value,
+                                    ),
+                                    blurRadius: 30,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Oyunu Bir Üst Seviyeye Taşı',
+                            style: TextStyle(
+                              color: K.w80,
+                              fontSize: 14,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Expanded(
+                    child: ListView(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      children: [
+                        Row(
+                          children: List.generate(3, (i) {
+                            final t = tiers[i];
+                            final sel = _selected == i;
+                            return Expanded(
+                              child: GestureDetector(
+                                onTap: () => setState(() => _selected = i),
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 300),
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 4,
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                    horizontal: 6,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(16),
+                                    gradient: sel
+                                        ? LinearGradient(
+                                            begin: Alignment.topLeft,
+                                            end: Alignment.bottomRight,
+                                            colors: [
+                                              t.$4.withOpacity(0.3),
+                                              t.$4.withOpacity(0.08),
+                                            ],
+                                          )
+                                        : null,
+                                    color: sel ? null : K.w05,
+                                    border: Border.all(
+                                      color: sel ? t.$4 : K.w10,
+                                      width: sel ? 1.8 : 1,
+                                    ),
+                                    boxShadow: sel
+                                        ? [
+                                            BoxShadow(
+                                              color: t.$4.withOpacity(0.35),
+                                              blurRadius: 20,
+                                            ),
+                                          ]
+                                        : [],
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Text(
+                                        t.$2,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: sel ? t.$4 : K.w40,
+                                          fontWeight: FontWeight.w900,
+                                          fontSize: 12,
+                                          letterSpacing: 1,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        t.$3,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: sel ? K.w100 : K.w40,
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: 11,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          }),
+                        ),
+                        const SizedBox(height: 16),
+                        GlassBox(
+                          borderColor: tiers[_selected].$4,
+                          radius: 18,
+                          padding: const EdgeInsets.all(20),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${tiers[_selected].$2} Özellikleri',
+                                style: TextStyle(
+                                  color: tiers[_selected].$4,
+                                  fontWeight: FontWeight.w900,
+                                  fontSize: 16,
+                                  letterSpacing: 1,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              ...tiers[_selected].$5.map(
+                                (f) => Padding(
+                                  padding: const EdgeInsets.only(bottom: 10),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        Icons.check_circle_rounded,
+                                        color: tiers[_selected].$4,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Text(
+                                        f,
+                                        style: const TextStyle(
+                                          color: K.w80,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        _loading
+                            ? const Center(
+                                child: CircularProgressIndicator(
+                                  color: K.gold2,
+                                ),
+                              )
+                            : goldBtn(
+                                '${tiers[_selected].$3} — Satın Al',
+                                () => _purchase(tiers[_selected].$1),
+                              ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Abonelik otomatik yenilenir. İstediğiniz zaman iptal edebilirsiniz.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: K.w20, fontSize: 10),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
+//  PROFILE SCREEN  (+ hesap silme)
+// ══════════════════════════════════════════════
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 4),
+  )..repeat(reverse: true);
+  Map<String, dynamic>? _profile;
+  bool _loading = true;
+
+  static const _achievements = {
+    'first_win': ('🥇', 'İlk Galibiyet'),
+    'ten_wins': ('🏆', '10 Galibiyet'),
+    'fifty_wins': ('👑', '50 Galibiyet'),
+    'streak_5': ('🔥', '5 Seri Galibiyet'),
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final p = await FirebaseService.getProfile();
+    if (mounted)
+      setState(() {
+        _profile = p;
+        _loading = false;
+      });
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  String _xpTitle(int xp) {
+    if (xp >= 5000) return 'Efsane';
+    if (xp >= 2000) return 'Uzman';
+    if (xp >= 1000) return 'Deneyimli';
+    if (xp >= 500) return 'Orta Seviye';
+    if (xp >= 100) return 'Yeni Başlayan';
+    return 'Acemi';
+  }
+
+  double _xpProgress(int xp) {
+    const milestones = [0, 100, 500, 1000, 2000, 5000, 10000];
+    for (int i = 0; i < milestones.length - 1; i++) {
+      if (xp < milestones[i + 1]) {
+        return (xp - milestones[i]) / (milestones[i + 1] - milestones[i]);
+      }
+    }
+    return 1.0;
+  }
+
+  // ─── HESAP SİLME DİYALOĞU ───────────────────
+  void _showDeleteAccountDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+            child: Container(
+              padding: const EdgeInsets.all(26),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF200707), K.panel, K.navy],
+                ),
+                border: Border.all(color: K.wrong.withOpacity(0.6), width: 1.5),
+                boxShadow: [
+                  BoxShadow(color: K.wrong.withOpacity(0.25), blurRadius: 40),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('⚠️', style: TextStyle(fontSize: 52)),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'HESABI SİL',
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      color: K.wrong,
+                      letterSpacing: 2,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Hesabınız kalıcı olarak silinecek. Tüm ilerlemeniz, puanlarınız ve verileriniz silinecektir. Bu işlem geri alınamaz.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: K.w60, fontSize: 14, height: 1.6),
+                  ),
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ghostBtn('Vazgeç', () => Navigator.pop(ctx)),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () async {
+                            Navigator.pop(ctx);
+                            await _deleteAccount();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(13),
+                              gradient: LinearGradient(
+                                colors: [K.wrong, K.wrong.withOpacity(0.7)],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: K.wrong.withOpacity(0.4),
+                                  blurRadius: 18,
+                                ),
+                              ],
+                            ),
+                            alignment: Alignment.center,
+                            child: const Text(
+                              'Sil',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: Colors.white,
+                                fontSize: 15,
+                                letterSpacing: 1,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteAccount() async {
+    final err = await FirebaseService.deleteAccount();
+    if (!mounted) return;
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(err),
+          backgroundColor: K.wrong,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          margin: const EdgeInsets.all(14),
+        ),
+      );
+    } else {
+      Navigator.popUntil(context, (r) => r.isFirst);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: AnimatedBuilder(
+        animation: _c,
+        builder: (_, __) => Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [K.navy, K.ink],
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: CustomPaint(painter: BeamPainter(K.cyan, 0.7)),
+            ),
+            Positioned.fill(child: CustomPaint(painter: ScanlinePainter(1.0))),
+            SafeArea(
+              child: Column(
+                children: [
+                  ClipRect(
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                      child: Container(
+                        padding: const EdgeInsets.fromLTRB(8, 12, 16, 12),
+                        decoration: BoxDecoration(
+                          color: K.panel.withOpacity(0.85),
+                          border: Border(
+                            bottom: BorderSide(
+                              color: K.cyan.withOpacity(0.3),
+                              width: 1,
+                            ),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                                color: K.w80,
+                                size: 20,
+                              ),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                            ShaderMask(
+                              shaderCallback: (b) => const LinearGradient(
+                                colors: [K.cyan, K.violet],
+                              ).createShader(b),
+                              child: const Text(
+                                'PROFİL',
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                  letterSpacing: 3,
+                                ),
+                              ),
+                            ),
+                            const Spacer(),
+                            GestureDetector(
+                              onTap: () async {
+                                await FirebaseService.signOut();
+                                if (mounted)
+                                  Navigator.popUntil(context, (r) => r.isFirst);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(10),
+                                  color: K.wrong.withOpacity(0.15),
+                                  border: Border.all(
+                                    color: K.wrong.withOpacity(0.3),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Çıkış',
+                                  style: TextStyle(
+                                    color: K.wrong,
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _loading
+                        ? const Center(
+                            child: CircularProgressIndicator(color: K.cyan),
+                          )
+                        : _profile == null
+                        ? const Center(
+                            child: Text(
+                              'Profil yüklenemedi',
+                              style: TextStyle(color: K.w40),
+                            ),
+                          )
+                        : _buildProfile(),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfile() {
+    final p = _profile!;
+    final xp = (p['xp'] ?? 0) as int;
+    final coins = (p['coins'] ?? 0) as int;
+    final won = (p['duelsWon'] ?? 0) as int;
+    final lost = (p['duelsLost'] ?? 0) as int;
+    final draw = (p['duelsDraw'] ?? 0) as int;
+    final totalGames = (p['totalGames'] ?? 0) as int;
+    final totalCorrect = (p['totalCorrect'] ?? 0) as int;
+    final totalQ = (p['totalQuestions'] ?? 0) as int;
+    final bestStreak = (p['bestStreak'] ?? 0) as int;
+    final isPremium = p['isPremium'] == true;
+    final premiumTier = p['premiumTier'] as String?;
+    final achievements = List<String>.from(p['achievements'] ?? []);
+    final winRate = (won + lost + draw) > 0
+        ? won / (won + lost + draw) * 100
+        : 0.0;
+    final accuracyRate = totalQ > 0 ? totalCorrect / totalQ * 100 : 0.0;
+
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        // Profile card
+        GlassBox(
+          borderColor: isPremium ? K.gold2 : K.cyan,
+          radius: 20,
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Stack(
+                alignment: Alignment.bottomRight,
+                children: [
+                  Container(
+                    width: 80,
+                    height: 80,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: const LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [K.cyan, K.violet],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: K.cyan.withOpacity(0.5),
+                          blurRadius: 20,
+                        ),
+                      ],
+                    ),
+                    alignment: Alignment.center,
+                    child: Text(
+                      (p['name'] as String? ?? 'O')[0].toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ),
+                  if (isPremium)
+                    Container(
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: K.gold2,
+                        border: Border.all(color: K.navy, width: 2),
+                      ),
+                      alignment: Alignment.center,
+                      child: const Text('👑', style: TextStyle(fontSize: 14)),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                p['name'] ?? 'Oyuncu',
+                style: const TextStyle(
+                  color: K.w100,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _xpTitle(xp),
+                style: const TextStyle(
+                  color: K.w40,
+                  fontSize: 13,
+                  letterSpacing: 2,
+                ),
+              ),
+              if (isPremium && premiumTier != null) ...[
+                const SizedBox(height: 6),
+                PremiumBadge(premiumTier),
+              ],
+              const SizedBox(height: 16),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'XP: $xp',
+                        style: const TextStyle(color: K.w60, fontSize: 12),
+                      ),
+                      const Text(
+                        'Sonraki seviye',
+                        style: TextStyle(color: K.w40, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: _xpProgress(xp),
+                      backgroundColor: K.w10,
+                      valueColor: const AlwaysStoppedAnimation(K.cyan),
+                      minHeight: 8,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _statPill('🪙', '$coins', 'Coin'),
+                  _statPill('🎮', '$totalGames', 'Oyun'),
+                  _statPill('🔥', '$bestStreak', 'Best Seri'),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        GlassBox(
+          borderColor: K.violet,
+          radius: 18,
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                '⚔️ DÜELLO İSTATİSTİKLERİ',
+                style: TextStyle(
+                  color: K.w60,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(child: _duelStatBox('$won', 'GALİBİYET', K.correct)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _duelStatBox('$lost', 'YENİLGİ', K.wrong)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _duelStatBox('$draw', 'BERABERE', K.gold2)),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Kazanma Oranı: %${winRate.toStringAsFixed(1)}',
+                    style: const TextStyle(color: K.w60, fontSize: 13),
+                  ),
+                  Text(
+                    'Doğruluk: %${accuracyRate.toStringAsFixed(1)}',
+                    style: const TextStyle(color: K.w60, fontSize: 13),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: winRate / 100,
+                  backgroundColor: K.wrong.withOpacity(0.3),
+                  valueColor: const AlwaysStoppedAnimation(K.correct),
+                  minHeight: 6,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 14),
+        if (achievements.isNotEmpty) ...[
+          GlassBox(
+            borderColor: K.gold2,
+            radius: 18,
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const GoldText(
+                  'BAŞARIMLAR',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: achievements.map((a) {
+                    final data = _achievements[a];
+                    if (data == null) return const SizedBox.shrink();
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        gradient: LinearGradient(
+                          colors: [
+                            K.gold2.withOpacity(0.2),
+                            K.gold4.withOpacity(0.08),
+                          ],
+                        ),
+                        border: Border.all(color: K.gold2.withOpacity(0.4)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(data.$1, style: const TextStyle(fontSize: 18)),
+                          const SizedBox(width: 6),
+                          Text(
+                            data.$2,
+                            style: const TextStyle(
+                              color: K.w80,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (!isPremium)
+          GestureDetector(
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const PremiumScreen()),
+            ),
+            child: GlassBox(
+              borderColor: K.gold2,
+              radius: 18,
+              padding: const EdgeInsets.all(18),
+              bgOverride: K.gold4.withOpacity(0.08),
+              child: Row(
+                children: [
+                  const Text('👑', style: TextStyle(fontSize: 32)),
+                  const SizedBox(width: 14),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        GoldText(
+                          'PREMİUM\'A GEÇ',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 2,
+                          ),
+                        ),
+                        SizedBox(height: 4),
+                        Text(
+                          'Reklamsız, ekstra joker, 5x XP ve daha fazlası!',
+                          style: TextStyle(color: K.w60, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    color: K.gold2,
+                    size: 16,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 14),
+
+        // ─── HESAP SİL BUTONU (Google Play zorunlu) ───
+        GestureDetector(
+          onTap: _showDeleteAccountDialog,
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 15),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              color: K.wrong.withOpacity(0.08),
+              border: Border.all(color: K.wrong.withOpacity(0.3), width: 1),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.delete_forever_rounded, color: K.wrong, size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'Hesabımı Sil',
+                  style: TextStyle(
+                    color: K.wrong,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                    letterSpacing: 1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  Widget _statPill(String emoji, String value, String label) => Column(
+    children: [
+      Text(emoji, style: const TextStyle(fontSize: 20)),
+      const SizedBox(height: 4),
+      Text(
+        value,
+        style: const TextStyle(
+          color: K.w100,
+          fontSize: 18,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+      Text(label, style: const TextStyle(color: K.w40, fontSize: 10)),
+    ],
+  );
+
+  Widget _duelStatBox(String val, String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(vertical: 12),
+    decoration: BoxDecoration(
+      borderRadius: BorderRadius.circular(12),
+      color: color.withOpacity(0.1),
+      border: Border.all(color: color.withOpacity(0.3)),
+    ),
+    alignment: Alignment.center,
+    child: Column(
+      children: [
+        Text(
+          val,
+          style: TextStyle(
+            color: color,
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: const TextStyle(color: K.w40, fontSize: 9, letterSpacing: 1),
+        ),
+      ],
+    ),
+  );
+}
+
+// ══════════════════════════════════════════════
+//  LEADERBOARD SCREEN
+// ══════════════════════════════════════════════
+class LeaderboardScreen extends StatefulWidget {
+  const LeaderboardScreen({super.key});
+  @override
+  State<LeaderboardScreen> createState() => _LeaderboardScreenState();
+}
+
+class _LeaderboardScreenState extends State<LeaderboardScreen>
+    with SingleTickerProviderStateMixin {
+  late final TabController _tab = TabController(length: 3, vsync: this);
+  List<Map<String, dynamic>> _xpBoard = [];
+  List<Map<String, dynamic>> _winsBoard = [];
+  List<Map<String, dynamic>> _streakBoard = [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final xp = await FirebaseService.getLeaderboard(orderBy: 'xp');
+    final wins = await FirebaseService.getLeaderboard(orderBy: 'duelsWon');
+    final streak = await FirebaseService.getLeaderboard(orderBy: 'bestStreak');
+    if (mounted) {
+      setState(() {
+        _xpBoard = xp;
+        _winsBoard = wins;
+        _streakBoard = streak;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _tab.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: Stack(
+      children: [
+        Positioned.fill(
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [K.navy, K.ink, K.inkDeep],
+              ),
+            ),
+          ),
+        ),
+        Positioned.fill(child: CustomPaint(painter: ScanlinePainter(1.0))),
+        SafeArea(
+          child: Column(
+            children: [
+              ClipRect(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                  child: Container(
+                    padding: const EdgeInsets.fromLTRB(8, 12, 16, 0),
+                    decoration: BoxDecoration(
+                      color: K.panel.withOpacity(0.85),
+                      border: Border(
+                        bottom: BorderSide(
+                          color: K.gold2.withOpacity(0.3),
+                          width: 1,
+                        ),
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(
+                                Icons.arrow_back_ios_new_rounded,
+                                color: K.w80,
+                                size: 20,
+                              ),
+                              onPressed: () => Navigator.pop(context),
+                            ),
+                            const GoldText(
+                              '🏆 LİDERBORD',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(
+                                Icons.refresh_rounded,
+                                color: K.w60,
+                                size: 22,
+                              ),
+                              onPressed: () {
+                                setState(() => _loading = true);
+                                _load();
+                              },
+                            ),
+                          ],
+                        ),
+                        TabBar(
+                          controller: _tab,
+                          labelColor: K.gold2,
+                          unselectedLabelColor: K.w40,
+                          indicatorColor: K.gold2,
+                          indicatorWeight: 2,
+                          labelStyle: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 12,
+                            letterSpacing: 1,
+                          ),
+                          tabs: const [
+                            Tab(text: 'XP'),
+                            Tab(text: 'GALİBİYET'),
+                            Tab(text: 'SERİ'),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: _loading
+                    ? const Center(
+                        child: CircularProgressIndicator(color: K.gold2),
+                      )
+                    : TabBarView(
+                        controller: _tab,
+                        children: [
+                          _buildBoard(_xpBoard, 'xp', 'XP'),
+                          _buildBoard(_winsBoard, 'duelsWon', 'GALİBİYET'),
+                          _buildBoard(_streakBoard, 'bestStreak', 'SERİ'),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildBoard(
+    List<Map<String, dynamic>> board,
+    String key,
+    String unit,
+  ) {
+    if (board.isEmpty) {
+      return const Center(
+        child: Text('Veri yok', style: TextStyle(color: K.w40)),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: board.length,
+      itemBuilder: (_, i) {
+        final p = board[i];
+        final isMe = p['uid'] == FirebaseService.uid;
+        final isPremium = p['isPremium'] == true;
+        final val = (p[key] ?? 0) as int;
+        final medal = i == 0
+            ? '🥇'
+            : i == 1
+            ? '🥈'
+            : i == 2
+            ? '🥉'
+            : '${i + 1}.';
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              gradient: isMe
+                  ? LinearGradient(
+                      colors: [
+                        K.cyan.withOpacity(0.2),
+                        K.violet.withOpacity(0.08),
+                      ],
+                    )
+                  : i < 3
+                  ? LinearGradient(
+                      colors: [
+                        K.gold2.withOpacity(0.12),
+                        K.gold4.withOpacity(0.04),
+                      ],
+                    )
+                  : null,
+              color: (isMe || i < 3) ? null : K.w05,
+              border: Border.all(
+                color: isMe
+                    ? K.cyan
+                    : i < 3
+                    ? K.gold2.withOpacity(0.4)
+                    : K.w10,
+                width: isMe ? 1.5 : 1,
+              ),
+              boxShadow: isMe
+                  ? [BoxShadow(color: K.cyan.withOpacity(0.25), blurRadius: 16)]
+                  : [],
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 36,
+                  child: Text(
+                    medal,
+                    style: TextStyle(
+                      fontSize: i < 3 ? 20 : 14,
+                      fontWeight: FontWeight.w900,
+                      color: i < 3 ? K.gold2 : K.w40,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  width: 38,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: isMe ? [K.cyan, K.violet] : [K.w20, K.w10],
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    (p['name'] as String? ?? 'O')[0].toUpperCase(),
+                    style: TextStyle(
+                      color: isMe ? Colors.white : K.w40,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Flexible(
+                            child: Text(
+                              p['name'] ?? 'Oyuncu',
+                              style: TextStyle(
+                                color: isMe ? K.cyan : K.w80,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (isPremium) ...[
+                            const SizedBox(width: 6),
+                            const Text('👑', style: TextStyle(fontSize: 12)),
+                          ],
+                        ],
+                      ),
+                      if ((p['activeTitle'] as String?)?.isNotEmpty == true)
+                        Text(
+                          p['activeTitle'] as String,
+                          style: const TextStyle(color: K.w40, fontSize: 10),
+                        ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    color: i < 3 ? K.gold2.withOpacity(0.15) : K.w05,
+                    border: Border.all(
+                      color: i < 3 ? K.gold2.withOpacity(0.4) : K.w10,
+                    ),
+                  ),
+                  child: Text(
+                    '$val $unit',
+                    style: TextStyle(
+                      color: i < 3 ? K.gold2 : K.w60,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
 //  LIFELINE DATA
 // ══════════════════════════════════════════════
 class _LI {
@@ -1780,7 +3535,7 @@ class _LI {
 }
 
 // ══════════════════════════════════════════════
-//  GAME SCREEN
+//  GAME SCREEN  (tek oyuncu - değişmedi)
 // ══════════════════════════════════════════════
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key});
@@ -1803,6 +3558,8 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
       lSwap = false;
   bool dipActive = false;
   int dipTries = 0;
+  int _totalCorrect = 0;
+  int _totalAnswered = 0;
 
   late final AnimationController _timerC =
       AnimationController(vsync: this, duration: const Duration(seconds: 30))
@@ -2066,6 +3823,8 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
         lvlIdx = 0;
         step = 0;
         correct = _ci(0, 0);
+        _totalCorrect = 0;
+        _totalAnswered = 0;
       });
       _qC.forward(from: 0);
       _startTimer();
@@ -2097,6 +3856,7 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
   void _reveal({bool timeout = false}) async {
     if (answered) return;
     _pauseTimer();
+    _totalAnswered++;
     if (timeout || selected == -1) {
       setState(() => answered = true);
       _flashC.forward(from: 0);
@@ -2105,6 +3865,7 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
       return;
     }
     if (selected == correct) {
+      _totalCorrect++;
       setState(() => answered = true);
       dipActive = false;
       dipTries = 0;
@@ -2113,6 +3874,7 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
       Future.delayed(const Duration(milliseconds: 1800), _nextQ);
     } else if (dipActive && dipTries < 1) {
       dipTries++;
+      _totalAnswered--;
       await _sound('wrong.mp3');
       setState(() {
         hidden.add(selected);
@@ -2215,12 +3977,25 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
 
   void _endGame() {
     _pauseTimer();
+    FirebaseService.updateStats(
+      won: false,
+      bestPrize: _guarantee(step),
+      correctCount: _totalCorrect,
+      totalCount: _totalAnswered,
+    );
     _showEnd(false, 'Garantili kazanç: ${_guarantee(step)}');
   }
 
   void _giveUp() {
     _pauseTimer();
-    _showEnd(true, 'Kazanç: ${_guarantee(step > 0 ? step - 1 : 0)}');
+    final g = _guarantee(step > 0 ? step - 1 : 0);
+    FirebaseService.updateStats(
+      won: false,
+      bestPrize: g,
+      correctCount: _totalCorrect,
+      totalCount: _totalAnswered,
+    );
+    _showEnd(true, 'Kazanç: $g');
   }
 
   void _reset() {
@@ -2237,6 +4012,8 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
       l50 = lAud = lPhone = lDip = lTime = lSwap = false;
       dipActive = false;
       dipTries = 0;
+      _totalCorrect = 0;
+      _totalAnswered = 0;
     });
     _loadQuestions();
   }
@@ -2247,6 +4024,8 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
     builder: (_) => _EndDialog(
       win: win,
       msg: msg,
+      correctCount: _totalCorrect,
+      totalCount: _totalAnswered,
       onRetry: () {
         Navigator.pop(context);
         _reset();
@@ -2642,6 +4421,26 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
                           letterSpacing: 1.5,
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      if (_totalAnswered > 0)
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(6),
+                            color: K.correct.withOpacity(0.12),
+                          ),
+                          child: Text(
+                            '$_totalCorrect/$_totalAnswered ✓',
+                            style: const TextStyle(
+                              fontSize: 9,
+                              color: K.correct,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 4),
@@ -3295,6 +5094,25 @@ class _GameState extends State<GameScreen> with TickerProviderStateMixin {
                           ),
                         ],
                       ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          const Text(
+                            '✓ Doğruluk: ',
+                            style: TextStyle(color: K.w40, fontSize: 11),
+                          ),
+                          Text(
+                            _totalAnswered > 0
+                                ? '%${(_totalCorrect / _totalAnswered * 100).toStringAsFixed(0)}'
+                                : '—',
+                            style: const TextStyle(
+                              color: K.cyan,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -3900,12 +5718,15 @@ class _LevelUpDialogState extends State<_LevelUpDialog>
 class _EndDialog extends StatefulWidget {
   final bool win;
   final String msg;
+  final int correctCount, totalCount;
   final VoidCallback onRetry, onExit;
   const _EndDialog({
     required this.win,
     required this.msg,
     required this.onRetry,
     required this.onExit,
+    this.correctCount = 0,
+    this.totalCount = 0,
   });
   @override
   State<_EndDialog> createState() => _EndDialogState();
@@ -3997,14 +5818,39 @@ class _EndDialogState extends State<_EndDialog>
                     color: K.w05,
                     border: Border.all(color: K.w10),
                   ),
-                  child: Text(
-                    widget.msg,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: K.w80,
-                      fontSize: 16,
-                      height: 1.5,
-                    ),
+                  child: Column(
+                    children: [
+                      Text(
+                        widget.msg,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: K.w80,
+                          fontSize: 16,
+                          height: 1.5,
+                        ),
+                      ),
+                      if (widget.totalCount > 0) ...[
+                        const SizedBox(height: 10),
+                        const Divider(color: K.w10, height: 1),
+                        const SizedBox(height: 10),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            _statItem('✅', '${widget.correctCount}', 'Doğru'),
+                            _statItem(
+                              '❌',
+                              '${widget.totalCount - widget.correctCount}',
+                              'Yanlış',
+                            ),
+                            _statItem(
+                              '📊',
+                              '%${(widget.correctCount / widget.totalCount * 100).toStringAsFixed(0)}',
+                              'Doğruluk',
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
                   ),
                 ),
                 const SizedBox(height: 22),
@@ -4061,6 +5907,22 @@ class _EndDialogState extends State<_EndDialog>
         ),
       ),
     ),
+  );
+
+  Widget _statItem(String emoji, String val, String label) => Column(
+    children: [
+      Text(emoji, style: const TextStyle(fontSize: 18)),
+      const SizedBox(height: 2),
+      Text(
+        val,
+        style: const TextStyle(
+          color: K.w100,
+          fontWeight: FontWeight.w900,
+          fontSize: 16,
+        ),
+      ),
+      Text(label, style: const TextStyle(color: K.w40, fontSize: 10)),
+    ],
   );
 }
 
@@ -4328,7 +6190,7 @@ class _AuthScreenState extends State<AuthScreen> {
 }
 
 // ══════════════════════════════════════════════
-//  DUEL LOBBY SCREEN (Placeholder)
+//  DUEL LOBBY SCREEN
 // ══════════════════════════════════════════════
 class DuelLobbyScreen extends StatefulWidget {
   const DuelLobbyScreen({super.key});
@@ -4346,11 +6208,20 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     begin: 0.6,
     end: 1.0,
   ).animate(CurvedAnimation(parent: _ambientC, curve: Curves.easeInOut));
+
   bool _loading = false;
+  bool _searching = false;
+  StreamSubscription? _queueSub;
+  Timer? _searchTimeout;
+  int _searchSeconds = 0;
+  Timer? _searchTimer;
 
   @override
   void dispose() {
     _ambientC.dispose();
+    _queueSub?.cancel();
+    _searchTimeout?.cancel();
+    _searchTimer?.cancel();
     super.dispose();
   }
 
@@ -4376,20 +6247,92 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
       );
       return;
     }
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _searching = true;
+      _searchSeconds = 0;
+    });
+
+    _searchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (mounted) setState(() => _searchSeconds++);
+    });
+
     try {
       final duelId = await FirebaseService.findOrCreateMatch('default');
       if (!mounted) return;
+
       if (duelId != null) {
-        _snack('Rakip bulundu! Oyun başlıyor...', K.correct);
-      } else {
-        _snack('Rakip aranıyor... Lütfen bekleyin.', K.cyan);
+        _searchTimer?.cancel();
+        setState(() {
+          _loading = false;
+          _searching = false;
+        });
+        _goToDuelGame(duelId);
+        return;
       }
+
+      _queueSub = FirebaseService.watchMyQueueDoc().listen((snap) async {
+        if (!mounted) return;
+        final data = snap.data();
+        if (data == null) return;
+        if (data['status'] == 'matched' && data['duelId'] != null) {
+          final id = data['duelId'] as String;
+          _queueSub?.cancel();
+          _searchTimeout?.cancel();
+          _searchTimer?.cancel();
+          if (mounted) {
+            setState(() {
+              _loading = false;
+              _searching = false;
+            });
+            _goToDuelGame(id);
+          }
+        }
+      });
+
+      _searchTimeout = Timer(const Duration(seconds: 60), () async {
+        _queueSub?.cancel();
+        _searchTimer?.cancel();
+        await FirebaseService.cancelMatchmaking();
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _searching = false;
+          });
+          _snack('Rakip bulunamadı. Tekrar deneyin.', Colors.orange);
+        }
+      });
     } catch (e) {
+      _searchTimer?.cancel();
+      if (mounted)
+        setState(() {
+          _loading = false;
+          _searching = false;
+        });
       _snack('Hata: $e', K.wrong);
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _cancelSearch() async {
+    _queueSub?.cancel();
+    _searchTimeout?.cancel();
+    _searchTimer?.cancel();
+    await FirebaseService.cancelMatchmaking();
+    if (mounted) {
+      setState(() {
+        _loading = false;
+        _searching = false;
+        _searchSeconds = 0;
+      });
+      _snack('Arama iptal edildi.', K.w60);
+    }
+  }
+
+  void _goToDuelGame(String duelId) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DuelGameScreen(duelId: duelId)),
+    );
   }
 
   @override
@@ -4432,7 +6375,6 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
             SafeArea(
               child: Column(
                 children: [
-                  // Top bar
                   ClipRect(
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
@@ -4541,7 +6483,6 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                       child: Column(
                         children: [
                           const SizedBox(height: 20),
-                          // Hero icon
                           Stack(
                             alignment: Alignment.center,
                             children: [
@@ -4594,7 +6535,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                           ),
                           const SizedBox(height: 24),
                           const GoldText(
-                            'RAKIP BUL',
+                            'RAKİP BUL',
                             style: TextStyle(
                               fontSize: 32,
                               fontWeight: FontWeight.w900,
@@ -4611,64 +6552,61 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                             ),
                           ),
                           const SizedBox(height: 40),
-                          // Quick match button
-                          GestureDetector(
-                            onTap: _loading ? null : _quickMatch,
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 300),
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(vertical: 20),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(20),
-                                gradient: LinearGradient(
-                                  begin: Alignment.topLeft,
-                                  end: Alignment.bottomRight,
-                                  colors: _loading
-                                      ? [K.w20, K.w10]
-                                      : [K.cyan, K.violet],
+                          if (_searching)
+                            _buildSearchingWidget()
+                          else
+                            GestureDetector(
+                              onTap: (user == null || _loading)
+                                  ? null
+                                  : _quickMatch,
+                              child: AnimatedContainer(
+                                duration: const Duration(milliseconds: 300),
+                                width: double.infinity,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 20,
                                 ),
-                                boxShadow: _loading
-                                    ? []
-                                    : [
-                                        BoxShadow(
-                                          color: K.cyan.withOpacity(0.5),
-                                          blurRadius: 30,
-                                          spreadRadius: 2,
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(20),
+                                  gradient: (user == null)
+                                      ? LinearGradient(colors: [K.w20, K.w10])
+                                      : const LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [K.cyan, K.violet],
                                         ),
-                                      ],
-                              ),
-                              child: _loading
-                                  ? const Center(
-                                      child: CircularProgressIndicator(
-                                        color: Colors.white,
-                                        strokeWidth: 2.5,
-                                      ),
-                                    )
-                                  : const Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.search_rounded,
-                                          color: Colors.white,
-                                          size: 26,
-                                        ),
-                                        SizedBox(width: 12),
-                                        Text(
-                                          'HIZLI EŞLEŞTİR',
-                                          style: TextStyle(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w900,
-                                            color: Colors.white,
-                                            letterSpacing: 2.5,
+                                  boxShadow: user == null
+                                      ? []
+                                      : [
+                                          BoxShadow(
+                                            color: K.cyan.withOpacity(0.5),
+                                            blurRadius: 30,
+                                            spreadRadius: 2,
                                           ),
-                                        ),
-                                      ],
+                                        ],
+                                ),
+                                child: const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.search_rounded,
+                                      color: Colors.white,
+                                      size: 26,
                                     ),
+                                    SizedBox(width: 12),
+                                    Text(
+                                      'HIZLI EŞLEŞTİR',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w900,
+                                        color: Colors.white,
+                                        letterSpacing: 2.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
-                          ),
                           const SizedBox(height: 16),
-                          // Stats row
                           Row(
                             children: [
                               Expanded(
@@ -4676,15 +6614,15 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                   borderColor: K.cyan,
                                   radius: 16,
                                   padding: const EdgeInsets.all(16),
-                                  child: Column(
+                                  child: const Column(
                                     children: [
-                                      const Icon(
+                                      Icon(
                                         Icons.emoji_events_rounded,
                                         color: K.gold2,
                                         size: 28,
                                       ),
-                                      const SizedBox(height: 6),
-                                      const Text(
+                                      SizedBox(height: 6),
+                                      Text(
                                         'XP KAZANIN',
                                         style: TextStyle(
                                           color: K.w60,
@@ -4692,8 +6630,8 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                           letterSpacing: 1.5,
                                         ),
                                       ),
-                                      const SizedBox(height: 2),
-                                      const Text(
+                                      SizedBox(height: 2),
+                                      Text(
                                         '150 XP',
                                         style: TextStyle(
                                           color: K.gold2,
@@ -4701,7 +6639,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                           fontWeight: FontWeight.w900,
                                         ),
                                       ),
-                                      const Text(
+                                      Text(
                                         'Galibiyet',
                                         style: TextStyle(
                                           color: K.w40,
@@ -4718,15 +6656,15 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                   borderColor: K.violet,
                                   radius: 16,
                                   padding: const EdgeInsets.all(16),
-                                  child: Column(
+                                  child: const Column(
                                     children: [
-                                      const Icon(
+                                      Icon(
                                         Icons.monetization_on_rounded,
                                         color: K.gold2,
                                         size: 28,
                                       ),
-                                      const SizedBox(height: 6),
-                                      const Text(
+                                      SizedBox(height: 6),
+                                      Text(
                                         'COIN KAZANIN',
                                         style: TextStyle(
                                           color: K.w60,
@@ -4734,8 +6672,8 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                           letterSpacing: 1.5,
                                         ),
                                       ),
-                                      const SizedBox(height: 2),
-                                      const Text(
+                                      SizedBox(height: 2),
+                                      Text(
                                         '50 🪙',
                                         style: TextStyle(
                                           color: K.gold2,
@@ -4743,7 +6681,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                           fontWeight: FontWeight.w900,
                                         ),
                                       ),
-                                      const Text(
+                                      Text(
                                         'Kazanan',
                                         style: TextStyle(
                                           color: K.w40,
@@ -4760,15 +6698,15 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                   borderColor: K.correct,
                                   radius: 16,
                                   padding: const EdgeInsets.all(16),
-                                  child: Column(
+                                  child: const Column(
                                     children: [
-                                      const Icon(
+                                      Icon(
                                         Icons.speed_rounded,
                                         color: K.correct,
                                         size: 28,
                                       ),
-                                      const SizedBox(height: 6),
-                                      const Text(
+                                      SizedBox(height: 6),
+                                      Text(
                                         'HIZ BONUSU',
                                         style: TextStyle(
                                           color: K.w60,
@@ -4776,8 +6714,8 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                           letterSpacing: 1.5,
                                         ),
                                       ),
-                                      const SizedBox(height: 2),
-                                      const Text(
+                                      SizedBox(height: 2),
+                                      Text(
                                         '+500',
                                         style: TextStyle(
                                           color: K.correct,
@@ -4785,7 +6723,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                           fontWeight: FontWeight.w900,
                                         ),
                                       ),
-                                      const Text(
+                                      Text(
                                         'Puan',
                                         style: TextStyle(
                                           color: K.w40,
@@ -4799,7 +6737,6 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                             ],
                           ),
                           const SizedBox(height: 20),
-                          // How to duel
                           GlassBox(
                             borderColor: K.gold2,
                             radius: 18,
@@ -4807,17 +6744,13 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Row(
-                                  children: [
-                                    GoldText(
-                                      'DÜELLO KURALLARI',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 2,
-                                      ),
-                                    ),
-                                  ],
+                                const GoldText(
+                                  'DÜELLO KURALLARI',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 2,
+                                  ),
                                 ),
                                 const SizedBox(height: 16),
                                 ...[
@@ -4828,6 +6761,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                   ),
                                   ('⏱️', 'Her soru için 15 saniye süreniz var'),
                                   ('🏆', 'Hız bonusu puanınızı artırır'),
+                                  ('👑', 'Premium üyeler öncelikli eşleşir'),
                                 ].map(
                                   (r) => Padding(
                                     padding: const EdgeInsets.only(bottom: 10),
@@ -4898,15 +6832,15 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                               borderColor: Colors.orange,
                               radius: 16,
                               padding: const EdgeInsets.all(16),
-                              child: Column(
+                              child: const Column(
                                 children: [
-                                  const Icon(
+                                  Icon(
                                     Icons.warning_amber_rounded,
                                     color: Colors.orange,
                                     size: 32,
                                   ),
-                                  const SizedBox(height: 10),
-                                  const Text(
+                                  SizedBox(height: 10),
+                                  Text(
                                     'Misafir modunda sınırlı özellikler mevcuttur. Tam deneyim için hesap oluşturun.',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
@@ -4924,7 +6858,6 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                       ),
                     ),
                   ),
-                  // Sign out button
                   if (user != null)
                     Padding(
                       padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
@@ -4967,6 +6900,1966 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchingWidget() => GlassBox(
+    borderColor: K.cyan,
+    radius: 20,
+    padding: const EdgeInsets.all(24),
+    child: Column(
+      children: [
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.0, end: 1.0),
+          duration: const Duration(seconds: 2),
+          builder: (_, v, __) => Transform.rotate(
+            angle: v * 2 * pi,
+            child: Container(
+              width: 70,
+              height: 70,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [K.cyan.withOpacity(0.8), K.violet.withOpacity(0.6)],
+                ),
+                boxShadow: [
+                  BoxShadow(color: K.cyan.withOpacity(0.5), blurRadius: 20),
+                ],
+              ),
+              child: const Icon(
+                Icons.radar_rounded,
+                color: Colors.white,
+                size: 36,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 16),
+        const Text(
+          'RAKİP ARANIYOR...',
+          style: TextStyle(
+            color: K.cyan,
+            fontWeight: FontWeight.w900,
+            fontSize: 16,
+            letterSpacing: 2,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          '$_searchSeconds saniye',
+          style: const TextStyle(color: K.w40, fontSize: 13),
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            backgroundColor: K.w10,
+            valueColor: const AlwaysStoppedAnimation(K.cyan),
+            minHeight: 4,
+          ),
+        ),
+        const SizedBox(height: 16),
+        ghostBtn('İptal Et', _cancelSearch),
+      ],
+    ),
+  );
+}
+
+// ══════════════════════════════════════════════
+//  DUEL GAME SCREEN
+// ══════════════════════════════════════════════
+
+class DuelGift {
+  final String id, emoji, name;
+  final int cost;
+  const DuelGift(this.id, this.emoji, this.name, this.cost);
+
+  static const all = [
+    DuelGift('rose', '🌹', 'Gül', 10),
+    DuelGift('fire', '🔥', 'Alev', 20),
+    DuelGift('crown', '👑', 'Taç', 50),
+    DuelGift('diamond', '💎', 'Elmas', 100),
+    DuelGift('rocket', '🚀', 'Roket', 30),
+    DuelGift('trophy', '🏆', 'Kupa', 75),
+  ];
+}
+
+class DuelLifeline {
+  final String id, emoji, label;
+  const DuelLifeline(this.id, this.emoji, this.label);
+
+  static const all = [
+    DuelLifeline('fifty', '✂️', '50:50'),
+    DuelLifeline('skip', '⏭️', 'Pas Geç'),
+    DuelLifeline('time', '⏰', '+10sn'),
+  ];
+}
+
+class DuelGameScreen extends StatefulWidget {
+  final String duelId;
+  const DuelGameScreen({super.key, required this.duelId});
+
+  @override
+  State<DuelGameScreen> createState() => _DuelGameScreenState();
+}
+
+class _DuelGameScreenState extends State<DuelGameScreen>
+    with TickerProviderStateMixin {
+  Map<String, dynamic>? _duelData;
+  StreamSubscription? _duelSub;
+  bool _ready = false;
+  int _qIdx = 0;
+  int _selected = -1;
+  bool _answered = false;
+  int _timeLeft = 15;
+  bool _timeUpDone = false;
+  bool _resultShown = false;
+  DateTime? _qStartTime;
+
+  bool _usedFifty = false;
+  bool _usedSkip = false;
+  bool _usedTime = false;
+  Set<int> _hiddenOpts = {};
+
+  final TextEditingController _chatC = TextEditingController();
+  final ScrollController _chatScroll = ScrollController();
+  List<Map<String, dynamic>> _chatMessages = [];
+  StreamSubscription? _chatSub;
+  bool _chatOpen = false;
+
+  final AudioPlayer _sfx = AudioPlayer();
+
+  late final AnimationController _timerC = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 15),
+  );
+  late final AnimationController _qC = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 400),
+  );
+  late final AnimationController _ambientC = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 5),
+  )..repeat(reverse: true);
+  late final AnimationController _giftC = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
+
+  late final Animation<double> _qFade = CurvedAnimation(
+    parent: _qC,
+    curve: Curves.easeIn,
+  );
+  late final Animation<double> _ambient = Tween(
+    begin: 0.5,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _ambientC, curve: Curves.easeInOut));
+  late final Animation<double> _giftAnim = Tween(
+    begin: 0.0,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _giftC, curve: Curves.elasticOut));
+
+  String? _incomingGiftEmoji;
+  String? _incomingGiftFrom;
+
+  String get _myKey => (_duelData?['player1']?['uid']) == FirebaseService.uid
+      ? 'player1'
+      : 'player2';
+  String get _oppKey => _myKey == 'player1' ? 'player2' : 'player1';
+
+  List<Map<String, dynamic>> get _questions =>
+      (_duelData?['questions'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+  @override
+  void initState() {
+    super.initState();
+    _timerC.addListener(_onTimerTick);
+    _timerC.addStatusListener(_onTimerStatus);
+    _listenDuel();
+    _listenChat();
+  }
+
+  @override
+  void dispose() {
+    _duelSub?.cancel();
+    _chatSub?.cancel();
+    _timerC.dispose();
+    _qC.dispose();
+    _ambientC.dispose();
+    _giftC.dispose();
+    _chatC.dispose();
+    _chatScroll.dispose();
+    _sfx.dispose();
+    super.dispose();
+  }
+
+  void _listenDuel() {
+    _duelSub = FirebaseService.duelStream(widget.duelId).listen((snap) async {
+      if (!mounted) return;
+      final data = snap.data();
+      if (data == null) return;
+      setState(() => _duelData = data);
+
+      final status = data['status'] as String? ?? '';
+
+      if (status == 'starting' && _questions.isEmpty) {
+        await _loadAndSetQuestions(data);
+      }
+
+      if (status == 'active' && !_ready && _questions.isNotEmpty) {
+        setState(() {
+          _ready = true;
+          _qIdx = 0;
+          _selected = -1;
+          _answered = false;
+          _hiddenOpts = {};
+        });
+        _qC.forward(from: 0);
+        _startTimer();
+      }
+
+      if (status == 'active') {
+        final myFinished = data[_myKey]?['finished'] == true;
+        final oppFinished = data[_oppKey]?['finished'] == true;
+        if (myFinished && oppFinished && !_resultShown) {
+          _resultShown = true;
+          await Future.delayed(const Duration(milliseconds: 400));
+          if (mounted) _showResult(data);
+        }
+      }
+
+      if (status == 'finished' && !_resultShown) {
+        _resultShown = true;
+        await Future.delayed(const Duration(milliseconds: 400));
+        if (mounted) _showResult(data);
+      }
+    });
+  }
+
+  void _listenChat() {
+    _chatSub = FirebaseFirestore.instance
+        .collection('duels')
+        .doc(widget.duelId)
+        .collection('chat')
+        .orderBy('ts')
+        .snapshots()
+        .listen((snap) {
+          if (!mounted) return;
+          final msgs = snap.docs.map((d) => d.data()).toList();
+          setState(() => _chatMessages = msgs);
+          for (final m in msgs) {
+            if (m['type'] == 'gift' &&
+                m['toUid'] == FirebaseService.uid &&
+                m['seen'] != true) {
+              _showIncomingGift(m['emoji'] as String, m['fromName'] as String);
+              FirebaseFirestore.instance
+                  .collection('duels')
+                  .doc(widget.duelId)
+                  .collection('chat')
+                  .where('type', isEqualTo: 'gift')
+                  .where('toUid', isEqualTo: FirebaseService.uid)
+                  .where('seen', isEqualTo: false)
+                  .get()
+                  .then((s) {
+                    for (final d in s.docs) {
+                      d.reference.update({'seen': true});
+                    }
+                  });
+              break;
+            }
+          }
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_chatScroll.hasClients) {
+              _chatScroll.animateTo(
+                _chatScroll.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+        });
+  }
+
+  Future<void> _loadAndSetQuestions(Map<String, dynamic> data) async {
+    if (_myKey != 'player1') return;
+    try {
+      final raw =
+          json.decode(await rootBundle.loadString('assets/questions.json'))
+              as List;
+      final all = raw.map((e) => Map<String, dynamic>.from(e)).toList()
+        ..shuffle();
+      final qs = all
+          .take(10)
+          .map(
+            (q) => {
+              'question': q['question'],
+              'options': q['options'],
+              'correctAnswer': q['correctAnswer'],
+            },
+          )
+          .toList();
+      await FirebaseService.setDuelQuestions(widget.duelId, qs);
+    } catch (e) {
+      debugPrint('🔴 [DUEL_QS] $e');
+    }
+  }
+
+  void _onTimerTick() {
+    final elapsed = (_timerC.lastElapsedDuration?.inSeconds ?? 0);
+    final remaining = 15 - elapsed;
+    if (remaining != _timeLeft && mounted) {
+      setState(() => _timeLeft = remaining.clamp(0, 15));
+    }
+  }
+
+  void _onTimerStatus(AnimationStatus s) {
+    if (s == AnimationStatus.completed && !_timeUpDone && !_answered) {
+      _timeUpDone = true;
+      _sound('wrong.mp3');
+      _doSubmit(-1);
+    }
+  }
+
+  void _startTimer([int sec = 15]) {
+    _timeUpDone = false;
+    _timeLeft = sec;
+    _timerC.duration = Duration(seconds: sec);
+    _timerC.forward(from: 0);
+  }
+
+  void _stopTimer() => _timerC.stop();
+
+  Future<void> _sound(String f) async {
+    try {
+      await _sfx.stop();
+      await _sfx.setReleaseMode(ReleaseMode.stop);
+      await _sfx.setSource(AssetSource('sounds/$f'));
+      await _sfx.resume();
+    } catch (_) {}
+  }
+
+  void _onOptionTap(int i) {
+    if (_answered) return;
+    if (_selected != -1) return;
+    if (_hiddenOpts.contains(i)) return;
+    setState(() => _selected = i);
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (mounted && !_answered) _doSubmit(_selected);
+    });
+  }
+
+  Future<void> _doSubmit(int answerIdx) async {
+    if (_answered) return;
+    _stopTimer();
+    setState(() => _answered = true);
+
+    final qs = _questions;
+    if (_qIdx >= qs.length) return;
+
+    final q = qs[_qIdx];
+    final opts = (q['options'] as List?)?.cast<String>() ?? [];
+    final correctIdx = opts.indexOf(q['correctAnswer']?.toString() ?? '');
+    final correct = answerIdx == correctIdx;
+
+    if (correct) {
+      _sound('correct.mp3');
+    } else {
+      _sound('wrong.mp3');
+    }
+
+    final timeMs = _qStartTime != null
+        ? DateTime.now().difference(_qStartTime!).inMilliseconds
+        : 15000;
+
+    await FirebaseService.submitAnswer(
+      duelId: widget.duelId,
+      playerKey: _myKey,
+      questionIdx: _qIdx,
+      answerIdx: answerIdx,
+      correct: correct,
+      timeMs: timeMs,
+    );
+
+    await Future.delayed(const Duration(milliseconds: 1400));
+    if (!mounted) return;
+
+    if (_qIdx < qs.length - 1) {
+      setState(() {
+        _qIdx++;
+        _selected = -1;
+        _answered = false;
+        _hiddenOpts = {};
+      });
+      _qC.forward(from: 0);
+      _startTimer();
+    } else {
+      await FirebaseService.markFinished(widget.duelId, _myKey);
+    }
+  }
+
+  void _useFifty() {
+    if (_usedFifty || _answered || _selected != -1) return;
+    final qs = _questions;
+    if (_qIdx >= qs.length) return;
+    final q = qs[_qIdx];
+    final opts = (q['options'] as List?)?.cast<String>() ?? [];
+    final correctIdx = opts.indexOf(q['correctAnswer']?.toString() ?? '');
+    final wrongs =
+        List.generate(
+            4,
+            (i) => i,
+          ).where((i) => i != correctIdx && !_hiddenOpts.contains(i)).toList()
+          ..shuffle();
+    setState(() {
+      _usedFifty = true;
+      _hiddenOpts.addAll(wrongs.take(2));
+    });
+    _sound('correct.mp3');
+    _snack('✂️ İki yanlış şık elendi!', K.gold2);
+  }
+
+  void _useSkip() {
+    if (_usedSkip || _answered) return;
+    final qs = _questions;
+    if (_qIdx >= qs.length - 1) {
+      _snack('Son soruda pas geçemezsiniz.', Colors.orange);
+      return;
+    }
+    setState(() {
+      _usedSkip = true;
+      _selected = -1;
+      _answered = false;
+      _hiddenOpts = {};
+      _qIdx++;
+    });
+    _stopTimer();
+    _qC.forward(from: 0);
+    _startTimer();
+    _snack('⏭️ Soru atlandı!', K.cyan);
+  }
+
+  void _useTimeLifeline() {
+    if (_usedTime || _answered) return;
+    _stopTimer();
+    setState(() {
+      _usedTime = true;
+      _timeLeft = (_timeLeft + 10).clamp(0, 30);
+    });
+    _startTimer(_timeLeft);
+    _snack('⏰ +10 saniye eklendi!', Colors.tealAccent);
+  }
+
+  Future<void> _sendMessage(String text) async {
+    if (text.trim().isEmpty || FirebaseService.uid == null) return;
+    final me = _duelData?[_myKey];
+    await FirebaseFirestore.instance
+        .collection('duels')
+        .doc(widget.duelId)
+        .collection('chat')
+        .add({
+          'type': 'text',
+          'text': text.trim(),
+          'fromUid': FirebaseService.uid,
+          'fromName': me?['name'] ?? 'Sen',
+          'ts': FieldValue.serverTimestamp(),
+        });
+    _chatC.clear();
+  }
+
+  void _showGiftPanel() {
+    _stopTimer();
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _GiftPanel(
+        onSend: (gift) async {
+          Navigator.pop(context);
+          _resumeTimer();
+          await _sendGift(gift);
+        },
+        onCancel: () {
+          Navigator.pop(context);
+          _resumeTimer();
+        },
+      ),
+    );
+  }
+
+  void _resumeTimer() {
+    if (_answered) return;
+    _startTimer(_timeLeft);
+  }
+
+  Future<void> _sendGift(DuelGift gift) async {
+    if (FirebaseService.uid == null) return;
+    final me = _duelData?[_myKey];
+    final opp = _duelData?[_oppKey];
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(FirebaseService.uid)
+          .update({'coins': FieldValue.increment(-gift.cost)});
+    } catch (_) {}
+
+    await FirebaseFirestore.instance
+        .collection('duels')
+        .doc(widget.duelId)
+        .collection('chat')
+        .add({
+          'type': 'gift',
+          'emoji': gift.emoji,
+          'giftName': gift.name,
+          'fromUid': FirebaseService.uid,
+          'fromName': me?['name'] ?? 'Sen',
+          'toUid': opp?['uid'],
+          'toName': opp?['name'] ?? 'Rakip',
+          'ts': FieldValue.serverTimestamp(),
+          'seen': false,
+        });
+
+    _snack('${gift.emoji} ${gift.name} gönderildi!', K.gold2);
+  }
+
+  void _showIncomingGift(String emoji, String fromName) {
+    if (!mounted) return;
+    setState(() {
+      _incomingGiftEmoji = emoji;
+      _incomingGiftFrom = fromName;
+    });
+    _giftC.forward(from: 0);
+    Future.delayed(const Duration(seconds: 3), () {
+      if (mounted)
+        setState(() {
+          _incomingGiftEmoji = null;
+          _incomingGiftFrom = null;
+        });
+    });
+  }
+
+  void _showResult(Map<String, dynamic> data) async {
+    _stopTimer();
+    final myScore = (data[_myKey]?['score'] ?? 0) as int;
+    final oppScore = (data[_oppKey]?['score'] ?? 0) as int;
+    final winnerUid = data['winnerUid'] as String?;
+
+    if (winnerUid == null) {
+      final String winner;
+      if (myScore > oppScore) {
+        winner = FirebaseService.uid!;
+      } else if (oppScore > myScore) {
+        winner = data[_oppKey]?['uid'] as String? ?? '';
+      } else {
+        winner = 'draw';
+      }
+      await FirebaseService.finishDuelWithResult(widget.duelId, winner);
+      await FirebaseService.claimDuelReward(
+        duelId: widget.duelId,
+        playerKey: _myKey,
+        winnerUid: winner,
+      );
+    } else {
+      await FirebaseService.claimDuelReward(
+        duelId: widget.duelId,
+        playerKey: _myKey,
+        winnerUid: winnerUid,
+      );
+    }
+
+    if (!mounted) return;
+    final snap = await FirebaseService.duelStream(widget.duelId).first;
+    final updated = snap.data() ?? data;
+    final finalWinner = updated['winnerUid'] as String? ?? '';
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _DuelResultDialog(
+        isWin: finalWinner == FirebaseService.uid,
+        isDraw: finalWinner == 'draw',
+        myScore: (updated[_myKey]?['score'] ?? myScore) as int,
+        oppScore: (updated[_oppKey]?['score'] ?? oppScore) as int,
+        myName: updated[_myKey]?['name'] as String? ?? 'Sen',
+        oppName: updated[_oppKey]?['name'] as String? ?? 'Rakip',
+        onDone: () => Navigator.popUntil(context, (r) => r.isFirst),
+      ),
+    );
+  }
+
+  void _snack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w700)),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.all(14),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready || _duelData == null || _questions.isEmpty) {
+      return _buildWaiting();
+    }
+    final qs = _questions;
+    if (_qIdx >= qs.length) return _buildWaiting();
+
+    final q = qs[_qIdx];
+    final opts = (q['options'] as List?)?.cast<String>() ?? [];
+    final correctIdx = opts.indexOf(q['correctAnswer']?.toString() ?? '');
+    final myScore = (_duelData![_myKey]?['score'] ?? 0) as int;
+    final oppScore = (_duelData![_oppKey]?['score'] ?? 0) as int;
+    final myName = _duelData![_myKey]?['name'] as String? ?? 'Sen';
+    final oppName = _duelData![_oppKey]?['name'] as String? ?? 'Rakip';
+
+    return Scaffold(
+      resizeToAvoidBottomInset: true,
+      body: AnimatedBuilder(
+        animation: _ambientC,
+        builder: (_, __) => Stack(
+          children: [
+            Positioned.fill(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [K.navy, K.ink, K.inkDeep],
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: CustomPaint(
+                painter: BeamPainter(K.cyan, 0.4 + 0.4 * _ambient.value),
+              ),
+            ),
+            Positioned.fill(child: CustomPaint(painter: ScanlinePainter(1.0))),
+            SafeArea(
+              child: Column(
+                children: [
+                  _buildScoreBar(myName, oppName, myScore, oppScore),
+                  LinearProgressIndicator(
+                    value: (_qIdx + 1) / qs.length,
+                    backgroundColor: K.w10,
+                    valueColor: const AlwaysStoppedAnimation(K.cyan),
+                    minHeight: 3,
+                  ),
+                  _buildLifelineBar(),
+                  Expanded(
+                    child: _chatOpen
+                        ? _buildChatPanel()
+                        : FadeTransition(
+                            opacity: _qFade,
+                            child: _buildQuestionPanel(q, opts, correctIdx),
+                          ),
+                  ),
+                  _buildBottomBar(),
+                ],
+              ),
+            ),
+            if (_incomingGiftEmoji != null)
+              Positioned(
+                top: 120,
+                left: 0,
+                right: 0,
+                child: IgnorePointer(
+                  child: AnimatedBuilder(
+                    animation: _giftAnim,
+                    builder: (_, __) => Transform.scale(
+                      scale: _giftAnim.value,
+                      child: Opacity(
+                        opacity: _giftAnim.value.clamp(0.0, 1.0),
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(20),
+                              gradient: LinearGradient(
+                                colors: [
+                                  K.gold2.withOpacity(0.9),
+                                  K.gold3.withOpacity(0.8),
+                                ],
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: K.gold2.withOpacity(0.6),
+                                  blurRadius: 30,
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _incomingGiftEmoji!,
+                                  style: const TextStyle(fontSize: 48),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  '$_incomingGiftFrom sana hediye gönderdi!',
+                                  style: const TextStyle(
+                                    color: K.gold4,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScoreBar(
+    String myName,
+    String oppName,
+    int myScore,
+    int oppScore,
+  ) {
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: K.panel.withOpacity(0.85),
+            border: Border(
+              bottom: BorderSide(color: K.cyan.withOpacity(0.3), width: 1),
+            ),
+          ),
+          child: Row(
+            children: [
+              _playerScore(myName, myScore, isMe: true),
+              _timerWidget(),
+              _playerScore(oppName, oppScore, isMe: false),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _playerScore(String name, int score, {required bool isMe}) => Expanded(
+    child: Column(
+      crossAxisAlignment: isMe
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.end,
+      children: [
+        Text(
+          name,
+          style: TextStyle(
+            color: isMe ? K.cyan : K.w60,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '$score',
+          style: TextStyle(
+            color: isMe ? K.w100 : K.w60,
+            fontSize: 22,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _timerWidget() {
+    final col = _timeLeft > 8
+        ? K.correct
+        : _timeLeft > 4
+        ? Colors.orange
+        : K.wrong;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 52,
+          height: 52,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: _timeLeft / 15.0,
+                color: col,
+                backgroundColor: K.w10,
+                strokeWidth: 3.5,
+              ),
+              Text(
+                '$_timeLeft',
+                style: TextStyle(
+                  color: col,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 2),
+        const Text(
+          'VS',
+          style: TextStyle(color: K.w20, fontSize: 9, letterSpacing: 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLifelineBar() {
+    return Container(
+      height: 56,
+      decoration: BoxDecoration(
+        color: K.navy.withOpacity(0.9),
+        border: const Border(bottom: BorderSide(color: K.w10, width: 1)),
+      ),
+      child: Row(
+        children: [
+          _lifelineBtn('✂️', '50:50', _usedFifty, K.gold2, _useFifty),
+          _lifelineBtn('⏭️', 'Pas Geç', _usedSkip, K.cyan, _useSkip),
+          _lifelineBtn(
+            '⏰',
+            '+10sn',
+            _usedTime,
+            Colors.tealAccent,
+            _useTimeLifeline,
+          ),
+          const VerticalDivider(color: K.w10, width: 1),
+          // Sohbet butonu
+          Expanded(
+            child: GestureDetector(
+              onTap: () => setState(() => _chatOpen = !_chatOpen),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: _chatOpen ? K.cyan.withOpacity(0.2) : K.w05,
+                  border: Border.all(
+                    color: _chatOpen ? K.cyan.withOpacity(0.6) : K.w10,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _chatOpen
+                          ? Icons.close_rounded
+                          : Icons.chat_bubble_rounded,
+                      size: 18,
+                      color: _chatOpen ? K.cyan : K.w40,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _chatOpen ? 'Kapat' : 'Sohbet',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: _chatOpen ? K.cyan : K.w40,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (!_chatOpen && _chatMessages.isNotEmpty)
+                      Container(
+                        margin: const EdgeInsets.only(top: 1),
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: K.cyan,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Hediye butonu
+          Expanded(
+            child: GestureDetector(
+              onTap: _showGiftPanel,
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  gradient: LinearGradient(
+                    colors: [
+                      K.gold2.withOpacity(0.18),
+                      K.gold3.withOpacity(0.06),
+                    ],
+                  ),
+                  border: Border.all(color: K.gold2.withOpacity(0.4), width: 1),
+                ),
+                child: const Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text('🎁', style: TextStyle(fontSize: 17)),
+                    SizedBox(height: 2),
+                    Text(
+                      'Hediye',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: K.gold2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _lifelineBtn(
+    String emoji,
+    String label,
+    bool used,
+    Color col,
+    VoidCallback onTap,
+  ) {
+    return Expanded(
+      child: GestureDetector(
+        onTap: used ? null : onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 250),
+          margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 7),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            gradient: used
+                ? null
+                : LinearGradient(
+                    colors: [col.withOpacity(0.18), col.withOpacity(0.04)],
+                  ),
+            color: used ? K.w05 : null,
+            border: Border.all(
+              color: used ? K.w10 : col.withOpacity(0.55),
+              width: used ? 0.5 : 1.2,
+            ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 16)),
+              const SizedBox(height: 1),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: used ? K.w20 : col,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildQuestionPanel(
+    Map<String, dynamic> q,
+    List<String> opts,
+    int correctIdx,
+  ) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+      child: Column(
+        children: [
+          GlassBox(
+            borderColor: K.cyan,
+            radius: 20,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Text(
+                  'SORU ${_qIdx + 1} / ${_questions.length}',
+                  style: const TextStyle(
+                    color: K.cyan,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 2,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  q['question']?.toString() ?? '',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: K.w100,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w500,
+                    height: 1.6,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...List.generate(opts.length, (i) {
+            if (_hiddenOpts.contains(i)) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 9),
+                child: Container(
+                  height: 54,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    color: K.w05,
+                    border: Border.all(color: K.w10, width: 0.5),
+                  ),
+                ),
+              );
+            }
+
+            const letters = ['A', 'B', 'C', 'D'];
+            final isSel = _selected == i;
+            final isCorr = correctIdx == i;
+
+            Color borderCol = K.opts[i];
+            bool glow = false;
+
+            if (_answered) {
+              if (isCorr) {
+                borderCol = K.correct;
+                glow = true;
+              } else if (isSel && !isCorr) {
+                borderCol = K.wrong;
+                glow = true;
+              } else {
+                borderCol = K.opts[i].withOpacity(0.2);
+              }
+            } else if (isSel) {
+              borderCol = K.select;
+              glow = true;
+            }
+
+            final canTap = !_answered && _selected == -1;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: GestureDetector(
+                onTap: canTap ? () => _onOptionTap(i) : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    gradient: LinearGradient(
+                      colors: glow
+                          ? [
+                              borderCol.withOpacity(0.28),
+                              borderCol.withOpacity(0.10),
+                            ]
+                          : [
+                              K.panelMid.withOpacity(0.75),
+                              K.panel.withOpacity(0.65),
+                            ],
+                    ),
+                    border: Border.all(
+                      color: glow
+                          ? borderCol
+                          : K.opts[i].withOpacity(_answered ? 0.15 : 0.32),
+                      width: glow ? 1.8 : 1,
+                    ),
+                    boxShadow: glow
+                        ? [
+                            BoxShadow(
+                              color: borderCol.withOpacity(0.4),
+                              blurRadius: 18,
+                            ),
+                          ]
+                        : [],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          color: glow
+                              ? borderCol.withOpacity(0.3)
+                              : K.opts[i].withOpacity(0.14),
+                          border: Border.all(
+                            color: glow
+                                ? borderCol
+                                : K.opts[i].withOpacity(0.4),
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          letters[i],
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                            color: glow
+                                ? borderCol
+                                : K.opts[i].withOpacity(_answered ? 0.3 : 0.85),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          opts[i],
+                          style: TextStyle(
+                            color: _answered
+                                ? (glow ? K.w100 : K.w40)
+                                : (isSel ? K.w100 : K.w80),
+                            fontSize: 15,
+                            fontWeight: glow
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      if (_answered && isCorr)
+                        const Icon(
+                          Icons.check_circle_rounded,
+                          color: K.correct,
+                          size: 22,
+                        ),
+                      if (_answered && isSel && !isCorr)
+                        const Icon(
+                          Icons.cancel_rounded,
+                          color: K.wrong,
+                          size: 22,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChatPanel() {
+    final myUid = FirebaseService.uid;
+    return Column(
+      children: [
+        // Oyuna geri dön banner
+        GestureDetector(
+          onTap: () => setState(() => _chatOpen = false),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [K.cyan.withOpacity(0.18), K.violet.withOpacity(0.10)],
+              ),
+              border: Border(
+                bottom: BorderSide(color: K.cyan.withOpacity(0.35), width: 1),
+              ),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.arrow_back_ios_new_rounded, size: 13, color: K.cyan),
+                SizedBox(width: 6),
+                Text(
+                  'OYUNA GERİ DÖN',
+                  style: TextStyle(
+                    color: K.cyan,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // Mesaj listesi
+        Expanded(
+          child: _chatMessages.isEmpty
+              ? const Center(
+                  child: Text(
+                    'Henüz mesaj yok',
+                    style: TextStyle(color: K.w40, fontSize: 13),
+                  ),
+                )
+              : ListView.builder(
+                  controller: _chatScroll,
+                  padding: const EdgeInsets.all(12),
+                  itemCount: _chatMessages.length,
+                  itemBuilder: (_, i) {
+                    final m = _chatMessages[i];
+                    final isMe = m['fromUid'] == myUid;
+                    final isGift = m['type'] == 'gift';
+
+                    if (isGift) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              gradient: LinearGradient(
+                                colors: [
+                                  K.gold2.withOpacity(0.2),
+                                  K.gold4.withOpacity(0.08),
+                                ],
+                              ),
+                              border: Border.all(
+                                color: K.gold2.withOpacity(0.4),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  m['emoji'] ?? '🎁',
+                                  style: const TextStyle(fontSize: 22),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  '${m['fromName']} → ${m['toName']} · ${m['giftName']}',
+                                  style: const TextStyle(
+                                    color: K.gold2,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      );
+                    }
+
+                    return Align(
+                      alignment: isMe
+                          ? Alignment.centerRight
+                          : Alignment.centerLeft,
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        constraints: const BoxConstraints(maxWidth: 260),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          gradient: isMe
+                              ? const LinearGradient(colors: [K.cyan, K.violet])
+                              : null,
+                          color: isMe ? null : K.w10,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: isMe
+                              ? CrossAxisAlignment.end
+                              : CrossAxisAlignment.start,
+                          children: [
+                            if (!isMe)
+                              Text(
+                                m['fromName'] ?? 'Rakip',
+                                style: const TextStyle(
+                                  color: K.w40,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            Text(
+                              m['text'] ?? '',
+                              style: TextStyle(
+                                color: isMe ? Colors.white : K.w80,
+                                fontSize: 14,
+                                height: 1.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+        ),
+        // Mesaj gönderme alanı
+        Padding(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+            top: 8,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _chatC,
+                  style: const TextStyle(color: K.w100),
+                  maxLength: 80,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: K.w05,
+                    hintText: 'Mesaj yaz...',
+                    hintStyle: const TextStyle(color: K.w40),
+                    counterText: '',
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onSubmitted: _sendMessage,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _sendMessage(_chatC.text),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: [K.cyan, K.violet]),
+                    boxShadow: [
+                      BoxShadow(color: K.cyan.withOpacity(0.4), blurRadius: 12),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.send_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: K.panel.withOpacity(0.9),
+        border: const Border(top: BorderSide(color: K.w10, width: 1)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Dot(color: K.cyan, size: 6),
+          const SizedBox(width: 8),
+          Text(
+            'Düello · ${_qIdx + 1}/${_questions.length} soru',
+            style: const TextStyle(
+              color: K.w40,
+              fontSize: 12,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Dot(color: K.violet, size: 6),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWaiting() => Scaffold(
+    backgroundColor: K.ink,
+    body: Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const GoldCoin(size: 60),
+          const SizedBox(height: 24),
+          const GoldText(
+            'DÜELLO BAŞLIYOR',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 3,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Sorular yükleniyor...',
+            style: TextStyle(color: K.w40, fontSize: 13),
+          ),
+          const SizedBox(height: 20),
+          const SizedBox(
+            width: 160,
+            child: LinearProgressIndicator(
+              backgroundColor: K.w10,
+              valueColor: AlwaysStoppedAnimation(K.cyan),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// ══════════════════════════════════════════════
+//  HEDİYE PANELİ
+// ══════════════════════════════════════════════
+class _GiftPanel extends StatelessWidget {
+  final void Function(DuelGift) onSend;
+  final VoidCallback onCancel;
+  const _GiftPanel({required this.onSend, required this.onCancel});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(20, 14, 20, 36),
+          decoration: BoxDecoration(
+            color: K.panel.withOpacity(0.96),
+            border: const Border(top: BorderSide(color: K.gold2, width: 1.5)),
+            boxShadow: [
+              BoxShadow(color: K.gold2.withOpacity(0.2), blurRadius: 30),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 18),
+                decoration: BoxDecoration(
+                  color: K.w20,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const GoldText(
+                '🎁 HEDİYE GÖNDER',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Rakibine hediye göndererek moral ver!',
+                style: TextStyle(color: K.w40, fontSize: 12),
+              ),
+              const SizedBox(height: 20),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 3,
+                  crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
+                  childAspectRatio: 1.0,
+                ),
+                itemCount: DuelGift.all.length,
+                itemBuilder: (_, i) {
+                  final g = DuelGift.all[i];
+                  return GestureDetector(
+                    onTap: () => onSend(g),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(16),
+                        gradient: LinearGradient(
+                          colors: [
+                            K.gold2.withOpacity(0.18),
+                            K.gold4.withOpacity(0.06),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: K.gold2.withOpacity(0.35),
+                          width: 1,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(g.emoji, style: const TextStyle(fontSize: 32)),
+                          const SizedBox(height: 4),
+                          Text(
+                            g.name,
+                            style: const TextStyle(
+                              color: K.w80,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Text('🪙', style: TextStyle(fontSize: 11)),
+                              const SizedBox(width: 3),
+                              Text(
+                                '${g.cost}',
+                                style: const TextStyle(
+                                  color: K.gold2,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+              const SizedBox(height: 14),
+              ghostBtn('Vazgeç', onCancel),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════
+//  DUEL RESULT DIALOG
+// ══════════════════════════════════════════════
+class _DuelResultDialog extends StatefulWidget {
+  final bool isWin, isDraw;
+  final int myScore, oppScore;
+  final String myName, oppName;
+  final VoidCallback onDone;
+
+  const _DuelResultDialog({
+    required this.isWin,
+    required this.isDraw,
+    required this.myScore,
+    required this.oppScore,
+    required this.myName,
+    required this.oppName,
+    required this.onDone,
+  });
+
+  @override
+  State<_DuelResultDialog> createState() => _DuelResultDialogState();
+}
+
+class _DuelResultDialogState extends State<_DuelResultDialog>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  )..repeat(reverse: true);
+  late final Animation<double> _pulse = Tween(
+    begin: 0.5,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut));
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color mainColor = widget.isDraw
+        ? K.gold2
+        : widget.isWin
+        ? K.correct
+        : K.wrong;
+    final String emoji = widget.isDraw
+        ? '🤝'
+        : widget.isWin
+        ? '🏆'
+        : '💔';
+    final String title = widget.isDraw
+        ? 'BERABERE!'
+        : widget.isWin
+        ? 'GALİBSİN!'
+        : 'YENİLDİN';
+    final String subtitle = widget.isDraw
+        ? 'İyi bir mücadeleydi!'
+        : widget.isWin
+        ? 'Rakibini geçtin!'
+        : 'Bir dahaki sefere!';
+    final String xpText = widget.isDraw
+        ? '+60 XP kazandın'
+        : widget.isWin
+        ? '+150 XP  •  +50 🪙'
+        : '+30 XP kazandın';
+
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (_, __) => Dialog(
+        backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [mainColor.withOpacity(0.15), K.panel, K.navy],
+                  stops: const [0.0, 0.5, 1.0],
+                ),
+                border: Border.all(
+                  color: mainColor.withOpacity(0.45 + 0.3 * _pulse.value),
+                  width: 1.5,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: mainColor.withOpacity(0.28 * _pulse.value),
+                    blurRadius: 60,
+                    spreadRadius: 2,
+                  ),
+                  BoxShadow(
+                    color: mainColor.withOpacity(0.10 * _pulse.value),
+                    blurRadius: 120,
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (_, __) => Container(
+                      width: 90,
+                      height: 90,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: mainColor.withOpacity(0.10),
+                        border: Border.all(
+                          color: mainColor.withOpacity(
+                            0.3 + 0.2 * _pulse.value,
+                          ),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: mainColor.withOpacity(0.35 * _pulse.value),
+                            blurRadius: 30,
+                            spreadRadius: 4,
+                          ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(emoji, style: const TextStyle(fontSize: 46)),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.w900,
+                      color: mainColor,
+                      letterSpacing: 3,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: K.w40,
+                      fontSize: 13,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(18),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 16,
+                          horizontal: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(18),
+                          color: K.w05,
+                          border: Border.all(
+                            color: mainColor.withOpacity(0.25),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            // Ben
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      gradient: const LinearGradient(
+                                        colors: [K.cyan, K.violet],
+                                        begin: Alignment.topLeft,
+                                        end: Alignment.bottomRight,
+                                      ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: K.cyan.withOpacity(0.4),
+                                          blurRadius: 12,
+                                        ),
+                                      ],
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      widget.myName.isNotEmpty
+                                          ? widget.myName[0].toUpperCase()
+                                          : 'S',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 18,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    widget.myName,
+                                    style: const TextStyle(
+                                      color: K.cyan,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '${widget.myScore}',
+                                    style: TextStyle(
+                                      color: widget.isWin ? K.correct : K.w100,
+                                      fontSize: 34,
+                                      fontWeight: FontWeight.w900,
+                                      shadows: widget.isWin
+                                          ? [
+                                              Shadow(
+                                                color: K.correct.withOpacity(
+                                                  0.5,
+                                                ),
+                                                blurRadius: 12,
+                                              ),
+                                            ]
+                                          : [],
+                                    ),
+                                  ),
+                                  const Text(
+                                    'puan',
+                                    style: TextStyle(
+                                      color: K.w40,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            // VS ayırıcı
+                            Column(
+                              children: [
+                                Container(width: 1, height: 60, color: K.w10),
+                                const SizedBox(height: 6),
+                                const Text(
+                                  'VS',
+                                  style: TextStyle(
+                                    color: K.w20,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 2,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Container(width: 1, height: 60, color: K.w10),
+                              ],
+                            ),
+                            // Rakip
+                            Expanded(
+                              child: Column(
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: K.w10,
+                                      border: Border.all(color: K.w20),
+                                    ),
+                                    alignment: Alignment.center,
+                                    child: Text(
+                                      widget.oppName.isNotEmpty
+                                          ? widget.oppName[0].toUpperCase()
+                                          : 'R',
+                                      style: const TextStyle(
+                                        color: K.w60,
+                                        fontWeight: FontWeight.w900,
+                                        fontSize: 18,
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    widget.oppName,
+                                    style: const TextStyle(
+                                      color: K.w60,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '${widget.oppScore}',
+                                    style: TextStyle(
+                                      color: !widget.isWin && !widget.isDraw
+                                          ? K.wrong
+                                          : K.w60,
+                                      fontSize: 34,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const Text(
+                                    'puan',
+                                    style: TextStyle(
+                                      color: K.w40,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  // XP bilgisi
+                  AnimatedBuilder(
+                    animation: _pulse,
+                    builder: (_, __) => Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        gradient: LinearGradient(
+                          colors: [
+                            mainColor.withOpacity(0.20),
+                            mainColor.withOpacity(0.06),
+                          ],
+                        ),
+                        border: Border.all(
+                          color: mainColor.withOpacity(
+                            0.35 + 0.15 * _pulse.value,
+                          ),
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: mainColor.withOpacity(0.15 * _pulse.value),
+                            blurRadius: 16,
+                          ),
+                        ],
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        xpText,
+                        style: TextStyle(
+                          color: mainColor,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          letterSpacing: 1,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  // Ana menüye dön butonu
+                  GestureDetector(
+                    onTap: widget.onDone,
+                    child: AnimatedBuilder(
+                      animation: _pulse,
+                      builder: (_, __) => Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          gradient: const LinearGradient(
+                            colors: [K.gold0, K.gold1, K.gold2, K.gold3],
+                            stops: [0.0, 0.2, 0.6, 1.0],
+                          ),
+                          boxShadow: [
+                            BoxShadow(
+                              color: K.goldShadow.withOpacity(_pulse.value),
+                              blurRadius: 24,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        alignment: Alignment.center,
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.home_rounded, color: K.gold4, size: 20),
+                            SizedBox(width: 8),
+                            Text(
+                              'ANA MENÜYE DÖN',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w900,
+                                color: K.gold4,
+                                fontSize: 15,
+                                letterSpacing: 2,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ),
       ),
     );
