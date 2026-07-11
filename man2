@@ -677,7 +677,7 @@ class AuthResult {
 }
 
 // ══════════════════════════════════════════════
-//  FIREBASE SERVICE
+//  FIREBASE SERVICE  (DÜZELTİLMİŞ SÜRÜM)
 // ══════════════════════════════════════════════
 class FirebaseService {
   static final _auth = FirebaseAuth.instance;
@@ -694,8 +694,9 @@ class FirebaseService {
       final acc = await _google.signIn();
       if (acc == null) return const AuthResult(null, 'Giriş iptal edildi.');
       final g = await acc.authentication;
-      if (g.idToken == null)
+      if (g.idToken == null) {
         return const AuthResult(null, 'Google token alınamadı.');
+      }
       final cred = GoogleAuthProvider.credential(
         accessToken: g.accessToken,
         idToken: g.idToken,
@@ -759,13 +760,11 @@ class FirebaseService {
     if (uid == null) return 'Kullanıcı bulunamadı.';
     try {
       final u = _auth.currentUser!;
-      // Firestore verisini sil
+      final currentUid = uid!;
       final batch = _db.batch();
-      batch.delete(_db.collection('users').doc(uid));
-      // Duel queue'dan temizle
-      batch.delete(_db.collection('duel_queue').doc(uid));
+      batch.delete(_db.collection('users').doc(currentUid));
+      batch.delete(_db.collection('duel_queue').doc(currentUid));
       await batch.commit();
-      // Firebase Auth'dan sil
       await u.delete();
       await _google.signOut().catchError((_) {});
       return null; // başarı
@@ -865,6 +864,18 @@ class FirebaseService {
           return err.message ?? 'Giriş başarısız (${err.code}).';
       }
     }
+    // 🔧 DÜZELTME: Firestore hataları (permission-denied, unavailable vb.)
+    // artık kullanıcıya okunabilir bir mesajla dönüyor.
+    if (err is FirebaseException) {
+      switch (err.code) {
+        case 'permission-denied':
+          return 'Bu işlem için yetkiniz yok.';
+        case 'unavailable':
+          return 'Sunucuya ulaşılamıyor. İnternetinizi kontrol edin.';
+        default:
+          return err.message ?? 'Bir hata oluştu (${err.code}).';
+      }
+    }
     return 'Bir hata oluştu: $err';
   }
 
@@ -925,8 +936,17 @@ class FirebaseService {
     }
   }
 
-  static Stream<DocumentSnapshot<Map<String, dynamic>>> profileStream() =>
-      _db.collection('users').doc(uid).snapshots();
+  // 🔧 DÜZELTME: uid null iken doc(null) çağrılmasın (rastgele ID üretiyordu).
+  // 🔧 DÜZELTME: handleError eklendi -> Firestore hatası artık uygulamayı
+  // çökertmiyor, sessizce loglanıp stream'e devam ediliyor.
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> profileStream() {
+    if (uid == null) return const Stream.empty();
+    return _db
+        .collection('users')
+        .doc(uid)
+        .snapshots()
+        .handleError((e) => debugPrint('🔴 [PROFILE_STREAM] $e'));
+  }
 
   static Future<List<Map<String, dynamic>>> searchPlayers(String query) async {
     final q = query.trim().toLowerCase();
@@ -962,7 +982,8 @@ class FirebaseService {
           .get()
           .timeout(const Duration(seconds: 10));
       return s.docs.map((d) => {...d.data(), 'uid': d.id}).toList();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('🔴 [LEADERBOARD] $e');
       return [];
     }
   }
@@ -970,13 +991,14 @@ class FirebaseService {
   // ─── MATCHMAKING ─────────────────────────────
   static Future<String?> findOrCreateMatch(String roomKey) async {
     if (uid == null) return null;
+    final myUid = uid!;
     final me = await getProfile();
     if (me == null) return null;
     final queueRef = _db.collection('duel_queue');
     final duelsRef = _db.collection('duels');
 
     try {
-      await queueRef.doc(uid).delete().catchError((_) {});
+      await queueRef.doc(myUid).delete().catchError((_) {});
 
       final waiting = await queueRef
           .where('roomKey', isEqualTo: roomKey)
@@ -985,7 +1007,7 @@ class FirebaseService {
           .get()
           .timeout(const Duration(seconds: 8));
 
-      final candidate = waiting.docs.where((d) => d.id != uid).toList();
+      final candidate = waiting.docs.where((d) => d.id != myUid).toList();
 
       if (candidate.isNotEmpty) {
         final oppDoc = candidate.first;
@@ -1016,7 +1038,7 @@ class FirebaseService {
               'rewardClaimed': false,
             },
             'player2': {
-              'uid': uid,
+              'uid': myUid,
               'name': me['name'],
               'xp': me['xp'] ?? 0,
               'isPremium': me['isPremium'] ?? false,
@@ -1037,8 +1059,8 @@ class FirebaseService {
         if (duelId != null) return duelId;
       }
 
-      await queueRef.doc(uid).set({
-        'uid': uid,
+      await queueRef.doc(myUid).set({
+        'uid': myUid,
         'name': me['name'],
         'xp': me['xp'] ?? 0,
         'isPremium': me['isPremium'] ?? false,
@@ -1050,19 +1072,32 @@ class FirebaseService {
 
       return null;
     } catch (e) {
+      // 🔧 DÜZELTME: Bu hata genelde composite index eksikliğinden gelir.
+      // Firebase konsolu terminal loguna bir index-oluşturma linki basar.
       debugPrint('🔴 [MATCHMAKING] $e');
       return null;
     }
   }
 
-  static Stream<DocumentSnapshot<Map<String, dynamic>>> watchMyQueueDoc() =>
-      _db.collection('duel_queue').doc(uid).snapshots();
+  // 🔧 DÜZELTME: uid null iken doc(null) çağrılmasın.
+  // 🔧 DÜZELTME: handleError eklendi -> "Rakip Ara" ekranında stream hatası
+  // artık uygulamayı çökertmiyor.
+  static Stream<DocumentSnapshot<Map<String, dynamic>>> watchMyQueueDoc() {
+    if (uid == null) return const Stream.empty();
+    return _db
+        .collection('duel_queue')
+        .doc(uid)
+        .snapshots()
+        .handleError((e) => debugPrint('🔴 [QUEUE_STREAM] $e'));
+  }
 
   static Future<void> cancelMatchmaking() async {
     if (uid == null) return;
     try {
       await _db.collection('duel_queue').doc(uid).delete();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [CANCEL_MATCHMAKING] $e');
+    }
   }
 
   static Future<String?> createDuel(String roomKey) async {
@@ -1147,7 +1182,8 @@ class FirebaseService {
           .where((d) => (d.data()['player1']?['uid']) != uid)
           .map((d) => {...d.data(), 'id': d.id})
           .toList();
-    } catch (_) {
+    } catch (e) {
+      debugPrint('🔴 [FIND_OPEN_DUELS] $e');
       return [];
     }
   }
@@ -1197,21 +1233,27 @@ class FirebaseService {
     }
   }
 
+  // 🔧 DÜZELTME: handleError eklendi.
   static Stream<QuerySnapshot<Map<String, dynamic>>> watchMyInvites() {
     if (uid == null) return const Stream.empty();
     return _db
         .collection('duel_invites')
         .where('toUid', isEqualTo: uid)
         .where('status', isEqualTo: 'pending')
-        .snapshots();
+        .snapshots()
+        .handleError((e) => debugPrint('🔴 [INVITES_STREAM] $e'));
   }
 
   static Future<bool> acceptInvite(String inviteId, String duelId) async {
     final ok = await joinDuelByCode(duelId);
     if (ok) {
-      await _db.collection('duel_invites').doc(inviteId).update({
-        'status': 'accepted',
-      });
+      try {
+        await _db.collection('duel_invites').doc(inviteId).update({
+          'status': 'accepted',
+        });
+      } catch (e) {
+        debugPrint('🔴 [ACCEPT_INVITE] $e');
+      }
     }
     return ok;
   }
@@ -1221,12 +1263,20 @@ class FirebaseService {
       await _db.collection('duel_invites').doc(inviteId).update({
         'status': 'declined',
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [DECLINE_INVITE] $e');
+    }
   }
 
+  // 🔧 DÜZELTME: handleError eklendi -> Düello ekranında Firestore hatası
+  // artık uygulamayı çökertmiyor.
   static Stream<DocumentSnapshot<Map<String, dynamic>>> duelStream(
     String duelId,
-  ) => _db.collection('duels').doc(duelId).snapshots();
+  ) => _db
+      .collection('duels')
+      .doc(duelId)
+      .snapshots()
+      .handleError((e) => debugPrint('🔴 [DUEL_STREAM] $e'));
 
   static Future<void> setDuelQuestions(
     String duelId,
@@ -1306,6 +1356,7 @@ class FirebaseService {
     required String? winnerUid,
   }) async {
     if (uid == null) return;
+    final currentUid = uid!;
     final duelRef = _db.collection('duels').doc(duelId);
     try {
       final snap = await duelRef.get();
@@ -1314,10 +1365,10 @@ class FirebaseService {
       final already = (data[playerKey]?['rewardClaimed'] ?? false) as bool;
       if (already) return;
       await duelRef.update({'$playerKey.rewardClaimed': true});
-      final isWin = winnerUid == uid;
+      final isWin = winnerUid == currentUid;
       final isDraw = winnerUid == 'draw';
       final xpGain = isDraw ? 60 : (isWin ? 150 : 30);
-      await _db.collection('users').doc(uid!).update({
+      await _db.collection('users').doc(currentUid).update({
         if (isWin) 'duelsWon': FieldValue.increment(1),
         if (!isWin && !isDraw) 'duelsLost': FieldValue.increment(1),
         if (isDraw) 'duelsDraw': FieldValue.increment(1),
@@ -1336,31 +1387,40 @@ class FirebaseService {
     required bool isDraw,
   }) async {
     if (uid == null) return;
+    final currentUid = uid!;
     try {
-      final snap = await _db.collection('users').doc(uid!).get();
+      final snap = await _db.collection('users').doc(currentUid).get();
       final data = snap.data();
       if (data == null) return;
       final won = (data['duelsWon'] ?? 0) as int;
       final streak = (data['winStreak'] ?? 0) as int;
       final achievements = List<String>.from(data['achievements'] ?? []);
       final newAch = <String>[];
-      if (won >= 1 && !achievements.contains('first_win'))
+      if (won >= 1 && !achievements.contains('first_win')) {
         newAch.add('first_win');
-      if (won >= 10 && !achievements.contains('ten_wins'))
+      }
+      if (won >= 10 && !achievements.contains('ten_wins')) {
         newAch.add('ten_wins');
-      if (won >= 50 && !achievements.contains('fifty_wins'))
+      }
+      if (won >= 50 && !achievements.contains('fifty_wins')) {
         newAch.add('fifty_wins');
-      if (streak >= 5 && !achievements.contains('streak_5'))
+      }
+      if (streak >= 5 && !achievements.contains('streak_5')) {
         newAch.add('streak_5');
+      }
       if (streak > (data['bestStreak'] ?? 0)) {
-        await _db.collection('users').doc(uid!).update({'bestStreak': streak});
+        await _db.collection('users').doc(currentUid).update({
+          'bestStreak': streak,
+        });
       }
       if (newAch.isNotEmpty) {
-        await _db.collection('users').doc(uid!).update({
+        await _db.collection('users').doc(currentUid).update({
           'achievements': FieldValue.arrayUnion(newAch),
         });
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [ACHIEVEMENTS] $e');
+    }
   }
 
   static Future<void> updateStats({
@@ -1378,7 +1438,9 @@ class FirebaseService {
         if (won) 'xp': FieldValue.increment(100),
         'bestPrize': bestPrize,
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [UPDATE_STATS] $e');
+    }
   }
 
   static Future<void> upgradeToPremium(String tier) async {
@@ -1391,14 +1453,18 @@ class FirebaseService {
           DateTime.now().add(const Duration(days: 30)),
         ),
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [UPGRADE_PREMIUM] $e');
+    }
   }
 
   static Future<void> updateTitle(String title) async {
     if (uid == null) return;
     try {
       await _db.collection('users').doc(uid!).update({'activeTitle': title});
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('🔴 [UPDATE_TITLE] $e');
+    }
   }
 }
 
