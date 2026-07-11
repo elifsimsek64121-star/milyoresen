@@ -677,7 +677,7 @@ class AuthResult {
 }
 
 // ══════════════════════════════════════════════
-//  FIREBASE SERVICE  (v3 - PUAN TRANSFERİ + ÇEKİLME + EŞLEŞME RACE-FIX)
+//  FIREBASE SERVICE  (v4 - EŞLEŞME HATASI ARTIK GİZLENMİYOR)
 // ══════════════════════════════════════════════
 class FirebaseService {
   static final _auth = FirebaseAuth.instance;
@@ -874,7 +874,9 @@ class FirebaseService {
     if (err is FirebaseException) {
       switch (err.code) {
         case 'permission-denied':
-          return 'Bu işlem için yetkiniz yok.';
+          return 'Bu işlem için yetkiniz yok. (Firestore güvenlik kuralları eşleşmeye izin vermiyor olabilir.)';
+        case 'failed-precondition':
+          return 'Sunucu tarafında eksik bir indeks var. Lütfen daha sonra tekrar deneyin.';
         case 'unavailable':
           return 'Sunucuya ulaşılamıyor. İnternetinizi kontrol edin.';
         default:
@@ -991,26 +993,23 @@ class FirebaseService {
   }
 
   // ══════════════════════════════════════════════
-  //  MATCHMAKING  (v2 - race condition düzeltildi)
+  //  MATCHMAKING  (v3 - hata artık sessizce yutulmuyor)
   // ══════════════════════════════════════════════
   //
-  // 🔧 BUG FIX (önemli): Eski sürümde iki oyuncu "Hızlı Eşleştir"e neredeyse
-  // aynı anda bastığında, ikisinin de "bekleyen rakip var mı?" sorgusu
-  // BİRBİRİNİN kuyruğa henüz yazmadığı bir ana denk geliyordu. Sonuç:
-  // ikisi de boş sonuç alıp kendini 'waiting' olarak kuyruğa yazıyor ve
-  // sonrasında HİÇBİRİ tekrar sorgu atmıyordu (sadece kendi kaydının
-  // 'matched' olmasını pasif şekilde bekliyordu). Üçüncü bir oyuncu
-  // gelmediği sürece bu iki oyuncu birbirini asla bulamıyor, 60 saniye
-  // sonra "rakip bulunamadı" hatası alıyordu — sanki sistem sahteymiş
-  // gibi görünüyordu.
+  // 🔧 v2'de eklenen race-condition düzeltmesi (periyodik retry) korunuyor.
   //
-  // Çözüm: Eşleştirme mantığı `_tryMatchFromQueue` adlı ortak bir metoda
-  // taşındı. Oyuncu kuyrukta beklerken lobi ekranı bu metodu birkaç
-  // saniyede bir tekrar çağırıyor (`retryMatch`), böylece ilk denemede
-  // kaçırılan eşleşme bir sonraki denemede yakalanıyor. Ayrıca eşleştirme
-  // transaction'ı, adayın hâlâ 'waiting' olduğunu tekrar kontrol ederek
-  // iki oyuncunun aynı üçüncü kişiyle çifte eşleşmesini (double-match)
-  // engeller.
+  // 🔧 v3 NE DEĞİŞTİ: Önceki sürümde `_tryMatchFromQueue` içindeki
+  // transaction başarısız olduğunda (ör. Firestore güvenlik kuralları
+  // rakibin kuyruk kaydını güncellemenize izin vermediği için
+  // 'permission-denied' hatası fırlattığında) hata sadece debugPrint
+  // ile loglanıp yutuluyordu ve fonksiyon `null` dönüyordu. Bu, kullanıcı
+  // arayüzünde "rakip bulunamadı" olarak görünüyordu ama gerçek sebep
+  // her zaman aynı kalıyordu: sunucu isteği reddediyordu, sistem rakip
+  // arıyor değildi. Şimdi 'permission-denied' ve 'failed-precondition'
+  // gibi kalıcı/yapısal hatalar YUKARI FIRLATILIYOR ki çağıran taraf
+  // (DuelLobbyScreen) kullanıcıya gerçek nedeni gösterebilsin. Geçici /
+  // eşzamanlılık kaynaklı hatalar (ör. 'aborted') ise yutulmaya devam
+  // eder, çünkü bunlar başka bir adayla denenince kendiliğinden çözülür.
 
   static Future<String?> findOrCreateMatch(String roomKey) async {
     if (uid == null) return null;
@@ -1018,12 +1017,15 @@ class FirebaseService {
     final me = await getProfile();
     if (me == null) return null;
 
+    await _db.collection('duel_queue').doc(myUid).delete().catchError((_) {});
+
+    // NOT: burada artık genel bir try/catch YOK. Kalıcı hatalar
+    // (permission-denied, failed-precondition) doğrudan çağırana
+    // (UI katmanına) yükseliyor ki gerçek sebep görünür olsun.
+    final duelId = await _tryMatchFromQueue(roomKey, myUid, me);
+    if (duelId != null) return duelId;
+
     try {
-      await _db.collection('duel_queue').doc(myUid).delete().catchError((_) {});
-
-      final duelId = await _tryMatchFromQueue(roomKey, myUid, me);
-      if (duelId != null) return duelId;
-
       await _db.collection('duel_queue').doc(myUid).set({
         'uid': myUid,
         'name': me['name'],
@@ -1034,41 +1036,43 @@ class FirebaseService {
         'duelId': null,
         'createdAt': FieldValue.serverTimestamp(),
       });
-
-      return null;
-    } catch (e) {
-      debugPrint('🔴 [MATCHMAKING] $e');
-      return null;
+    } on FirebaseException catch (e) {
+      debugPrint('🔴 [QUEUE_WRITE] code=${e.code} message=${e.message}');
+      rethrow;
     }
+
+    return null;
   }
 
-  // 🔧 YENİ: Kuyrukta beklerken periyodik olarak tekrar rakip aramak
-  // için lobi ekranından çağrılır. Kendi kaydımız hâlâ 'waiting' ise
-  // tekrar dener; başka biri bizi zaten eşleştirdiyse (status
-  // 'matched') dokunmadan null döner — o durumu watchMyQueueDoc()
-  // dinleyicisi zaten yakalayacaktır.
+  // 🔧 Kuyrukta beklerken periyodik olarak tekrar rakip aramak için lobi
+  // ekranından çağrılır. Kendi kaydımız hâlâ 'waiting' ise tekrar dener;
+  // başka biri bizi zaten eşleştirdiyse (status 'matched') dokunmadan
+  // null döner — o durumu watchMyQueueDoc() dinleyicisi zaten yakalar.
+  //
+  // Kalıcı hatalar burada da fırlatılır; DuelLobbyScreen'deki retry
+  // timer'ı bunu yakalayıp kullanıcıya gösterir ve aramayı durdurur
+  // (aksi halde 60 saniye boyunca aynı hatayı sessizce tekrar tekrar
+  // almaya devam ederdi).
   static Future<String?> retryMatch(String roomKey) async {
     if (uid == null) return null;
     final myUid = uid!;
-    try {
-      final myQueueSnap = await _db.collection('duel_queue').doc(myUid).get();
-      if (!myQueueSnap.exists) return null;
-      final myStatus = myQueueSnap.data()?['status'] as String?;
-      if (myStatus != 'waiting') return null;
+    final myQueueSnap = await _db.collection('duel_queue').doc(myUid).get();
+    if (!myQueueSnap.exists) return null;
+    final myStatus = myQueueSnap.data()?['status'] as String?;
+    if (myStatus != 'waiting') return null;
 
-      final me = await getProfile();
-      if (me == null) return null;
+    final me = await getProfile();
+    if (me == null) return null;
 
-      return await _tryMatchFromQueue(roomKey, myUid, me);
-    } catch (e) {
-      debugPrint('🔴 [MATCHMAKING_RETRY] $e');
-      return null;
-    }
+    return await _tryMatchFromQueue(roomKey, myUid, me);
   }
 
   // Ortak eşleştirme mantığı: bekleyen adayları sorgular, sırayla
   // transaction ile eşleşmeyi dener (aday araya biri tarafından
-  // kapılmışsa bir sonraki adaya geçer).
+  // kapılmışsa bir sonraki adaya geçer). Kalıcı/yapısal hatalarda
+  // (permission-denied, failed-precondition) döngüyü durdurup hatayı
+  // yukarı fırlatır — çünkü bu tip hatalar hangi adayı denerseniz
+  // deneyin aynı şekilde başarısız olur, tekrar denemenin anlamı yok.
   static Future<String?> _tryMatchFromQueue(
     String roomKey,
     String myUid,
@@ -1077,12 +1081,18 @@ class FirebaseService {
     final queueRef = _db.collection('duel_queue');
     final duelsRef = _db.collection('duels');
 
-    final waiting = await queueRef
-        .where('roomKey', isEqualTo: roomKey)
-        .where('status', isEqualTo: 'waiting')
-        .limit(10)
-        .get()
-        .timeout(const Duration(seconds: 8));
+    final QuerySnapshot<Map<String, dynamic>> waiting;
+    try {
+      waiting = await queueRef
+          .where('roomKey', isEqualTo: roomKey)
+          .where('status', isEqualTo: 'waiting')
+          .limit(10)
+          .get()
+          .timeout(const Duration(seconds: 8));
+    } on FirebaseException catch (e) {
+      debugPrint('🔴 [QUEUE_QUERY] code=${e.code} message=${e.message}');
+      rethrow;
+    }
 
     final candidates = waiting.docs.where((d) => d.id != myUid).toList();
     if (candidates.isEmpty) return null;
@@ -1135,6 +1145,16 @@ class FirebaseService {
           // Kendi bekleme kaydımızı temizle (varsa).
           tx.delete(queueRef.doc(myUid));
         });
+      } on FirebaseException catch (e) {
+        debugPrint('🔴 [MATCH_TX] code=${e.code} message=${e.message}');
+        duelId = null;
+        if (e.code == 'permission-denied' || e.code == 'failed-precondition') {
+          // Kalıcı/yapısal hata: başka adayla denemek sonucu değiştirmez.
+          // Firestore kurallarını / indekslerini düzeltmeniz gerekiyor.
+          rethrow;
+        }
+        // Geçici hata (ör. 'aborted' - eşzamanlı transaction çakışması):
+        // sıradaki adayla denemeye devam et.
       } catch (e) {
         debugPrint('🔴 [MATCH_TX] $e');
         duelId = null;
@@ -6524,7 +6544,7 @@ class _AuthScreenState extends State<AuthScreen> {
 }
 
 // ══════════════════════════════════════════════
-//  DUEL LOBBY SCREEN  (v2 - EŞLEŞME RACE-FIX: periyodik retry)
+//  DUEL LOBBY SCREEN  (v3 - EŞLEŞME HATASI ARTIK KULLANICIYA GÖSTERİLİYOR)
 // ══════════════════════════════════════════════
 class DuelLobbyScreen extends StatefulWidget {
   const DuelLobbyScreen({super.key});
@@ -6550,7 +6570,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
   int _searchSeconds = 0;
   Timer? _searchTimer;
 
-  // 🔧 YENİ: Kuyrukta beklerken periyodik olarak tekrar rakip arar.
+  // Kuyrukta beklerken periyodik olarak tekrar rakip arar.
   // Bu, iki oyuncunun aynı anda eşleşmeye çalışıp birbirini ilk seferde
   // kaçırdığı (race condition) durumu birkaç saniye içinde telafi eder.
   Timer? _retryTimer;
@@ -6582,6 +6602,9 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     );
   }
 
+  // 🔧 FirebaseService.findOrCreateMatch artık kalıcı hatalarda
+  // (permission-denied, failed-precondition) exception fırlatıyor.
+  // Bu, hatayı yutmak yerine kullanıcıya gerçek sebebi gösterir.
   Future<void> _quickMatch() async {
     if (FirebaseService.user == null) {
       Navigator.push(
@@ -6622,16 +6645,45 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
       });
 
       // Yol 2: Biz de beklerken periyodik olarak tekrar rakip ararız.
-      // İlk denemede oluşan çakışmayı (iki tarafın da aynı anda boş
-      // sonuç alması) birkaç saniye içinde telafi eder.
       _retryTimer = Timer.periodic(const Duration(seconds: 3), (t) async {
         if (!mounted || _matchResolved) {
           t.cancel();
           return;
         }
-        final id = await FirebaseService.retryMatch(_roomKey);
-        if (id != null && mounted && !_matchResolved) {
-          _finishSearch(id);
+        try {
+          final id = await FirebaseService.retryMatch(_roomKey);
+          if (id != null && mounted && !_matchResolved) {
+            _finishSearch(id);
+          }
+        } on FirebaseException catch (e) {
+          // Kalıcı hata: aramayı durdur, kullanıcıya gerçek sebebi göster.
+          if (e.code == 'permission-denied' ||
+              e.code == 'failed-precondition') {
+            t.cancel();
+            _matchResolved = true;
+            _queueSub?.cancel();
+            _searchTimeout?.cancel();
+            _searchTimer?.cancel();
+            await FirebaseService.cancelMatchmaking();
+            if (mounted) {
+              setState(() {
+                _loading = false;
+                _searching = false;
+              });
+              _snack(
+                e.code == 'permission-denied'
+                    ? 'Eşleştirme reddedildi: Firestore güvenlik kuralları '
+                        'düzeltilmeli (duel_queue koleksiyonu).'
+                    : 'Sunucuda eksik bir indeks var, biraz sonra tekrar '
+                        'deneyin.',
+                K.wrong,
+              );
+            }
+          }
+          // Diğer (geçici) hatalarda arama sessizce devam eder,
+          // bir sonraki 3 saniyelik tikte tekrar denenir.
+        } catch (e) {
+          debugPrint('🔴 [RETRY_MATCH] $e');
         }
       });
 
@@ -6651,12 +6703,29 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
       });
     } catch (e) {
       _searchTimer?.cancel();
-      if (mounted)
+      _retryTimer?.cancel();
+      if (mounted) {
         setState(() {
           _loading = false;
           _searching = false;
         });
-      _snack('Hata: $e', K.wrong);
+      }
+      if (e is FirebaseException && e.code == 'permission-denied') {
+        _snack(
+          'Eşleştirme reddedildi: Firestore güvenlik kuralları '
+          'duel_queue koleksiyonunda başka bir oyuncunun kaydını '
+          'güncellemenize izin vermiyor. Kuralları güncelleyin.',
+          K.wrong,
+        );
+      } else if (e is FirebaseException && e.code == 'failed-precondition') {
+        _snack(
+          'Sunucuda eksik bir Firestore indeksi var. Debug konsolundaki '
+          'linke tıklayıp indeksi oluşturun.',
+          K.wrong,
+        );
+      } else {
+        _snack('Hata: $e', K.wrong);
+      }
     }
   }
 
