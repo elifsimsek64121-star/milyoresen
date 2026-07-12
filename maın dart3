@@ -87,9 +87,9 @@ class K {
 //  ADS
 // ══════════════════════════════════════════════
 class Ads {
-  static const banner = 'ca-app-pub-3940256099942544/6300978111';
-  static const rewarded = 'ca-app-pub-3940256099942544/1033173712';
-  static const interstitial = 'ca-app-pub-3940256099942544/5224354917';
+  static const banner = 'ca-app-pub-6551908952762916/5173359378';
+  static const rewarded = 'ca-app-pub-6551908952762916/5364576151';
+  static const interstitial = 'ca-app-pub-6551908952762916/7432653211';
 }
 
 // ══════════════════════════════════════════════
