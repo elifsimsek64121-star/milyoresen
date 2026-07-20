@@ -2157,9 +2157,9 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
       ),
       const SizedBox(height: 18),
       const GoldText(
-        '5 MİLYONLUK',
+        ' MİLYONERSEN ONLİNE BİLGİ DÜELLOSU  ',
         style: TextStyle(
-          fontSize: 42,
+          fontSize: 25,
           fontWeight: FontWeight.w900,
           letterSpacing: 5,
           height: 1.0,
@@ -2168,12 +2168,15 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
       ShaderMask(
         shaderCallback:
             (b) => const LinearGradient(
-              colors: [K.cyan, Color(0xFF82DFFF)],
+              colors: [
+                Color.fromARGB(255, 255, 0, 106),
+                Color.fromARGB(255, 255, 130, 170),
+              ],
             ).createShader(b),
         child: const Text(
-          'SORU YARIŞI',
+          'İsmailsimsekyazılım games.',
           style: TextStyle(
-            fontSize: 30,
+            fontSize: 15,
             fontWeight: FontWeight.w300,
             color: Colors.white,
             letterSpacing: 9,
@@ -6345,7 +6348,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                         colors: [K.cyan, K.violet],
                                       ).createShader(b),
                                   child: const Text(
-                                    'CANLI DÜELLO',
+                                    'CANLI DÜELLOSU',
                                     style: TextStyle(
                                       fontSize: 18,
                                       fontWeight: FontWeight.w900,
@@ -6486,7 +6489,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                               ),
                               const SizedBox(height: 8),
                               const Text(
-                                'Gerçek oyuncularla anlık düello',
+                                'Öncelikle gerçek rakiplerle eşleşin, uygun rakip bulunamadığında ise beklemeden düelloya devam edin.',
                                 style: TextStyle(
                                   color: K.w40,
                                   fontSize: 14,
@@ -6706,11 +6709,11 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                     ...[
                                       (
                                         '⚡',
-                                        'Anlık eşleştirme ile rakip bulunur',
+                                        'Öncelikle gerçek rakiplerle anında eşleştirme yapılır. Uygun rakip bulunamazsa beklemeden düello başlayabilmeniz için sistem otomatik olarak rakip atayabilir.',
                                       ),
                                       (
                                         '🎯',
-                                        '10 soruda en yüksek skoru yapan kazanır',
+                                        '👥 Arkadaşlarınız da oyuna katılarak size rakip olabilir. Aynı anda çevrim içi olduğunuzda birbirinizle düello yapabilirsiniz.',
                                       ),
                                       (
                                         '⏱️',
