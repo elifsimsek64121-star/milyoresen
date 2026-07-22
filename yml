@@ -1,24 +1,39 @@
-name: five_million_quiz  # Paket adı (Flutter için, küçük harf ve alt çizgi)
-description: "milyonersen bilgi yarışması zeka oyunu"
-publish_to: 'none'
+name: kim_5_milyon_olmak_ister
+description: Kim 5 Milyon Olmak İster Flutter Uygulaması
+publish_to: "none"
 
-version: 1.0.0+12
+version: 1.0.30+70
 
 environment:
-  sdk: ">=3.9.0 <4.0.0"
+  sdk: ">=3.7.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  font_awesome_flutter: ^10.4.0
-  flutter_svg: ^2.1.1
+
   cupertino_icons: ^1.0.8
-  google_mobile_ads: ^5.0.0
+  font_awesome_flutter: ^10.4.0
+  flutter_svg: ^2.1.2
+
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+  google_sign_in: ^6.2.1
+  flutter_facebook_auth: ^7.0.1
+
+  google_mobile_ads: ^5.1.0
   audioplayers: ^6.5.1
+
+  http: ^1.2.2
+  shared_preferences: ^2.3.2
+  intl: ^0.19.0
+  lottie: ^3.1.2
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+
   flutter_lints: ^3.0.1
   flutter_launcher_icons: ^0.14.4
 
@@ -30,6 +45,7 @@ flutter_icons:
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/questions.json
     - assets/app_icon.png
