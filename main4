@@ -1615,6 +1615,31 @@ class FirebaseService {
     }
   }
 
+  // ─── BOT DÜELLOSU ÖDÜLÜ (gerçek rakip bulunamadığında) ──
+  // Gerçek düello ile birebir aynı ödül mantığını kullanır; farkı, karşı
+  // tarafın bir Firestore 'duels' kaydı olmadığı için sadece bu cihazdaki
+  // oyuncunun profilini güncellemesidir.
+  static Future<void> claimBotDuelReward({
+    required bool isWin,
+    required bool isDraw,
+  }) async {
+    if (uid == null) return;
+    try {
+      final xpGain = isDraw ? 60 : (isWin ? 150 : 30);
+      await _db.collection('users').doc(uid!).update({
+        if (isWin) 'duelsWon': FieldValue.increment(1),
+        if (!isWin && !isDraw) 'duelsLost': FieldValue.increment(1),
+        if (isDraw) 'duelsDraw': FieldValue.increment(1),
+        'xp': FieldValue.increment(xpGain),
+        if (isWin) 'coins': FieldValue.increment(50),
+        'winStreak': isWin ? FieldValue.increment(1) : 0,
+      });
+      _checkAchievements(isWin: isWin, isDraw: isDraw);
+    } catch (e) {
+      debugPrint('🔴 [CLAIM_BOT_REWARD] $e');
+    }
+  }
+
   static Future<void> _checkAchievements({
     required bool isWin,
     required bool isDraw,
@@ -2132,9 +2157,9 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
       ),
       const SizedBox(height: 18),
       const GoldText(
-        '5 MİLYONLUK',
+        ' MİLYONERSEN ONLİNE BİLGİ DÜELLOSU  ',
         style: TextStyle(
-          fontSize: 42,
+          fontSize: 25,
           fontWeight: FontWeight.w900,
           letterSpacing: 5,
           height: 1.0,
@@ -2143,12 +2168,15 @@ class _SplashState extends State<SplashScreen> with TickerProviderStateMixin {
       ShaderMask(
         shaderCallback:
             (b) => const LinearGradient(
-              colors: [K.cyan, Color(0xFF82DFFF)],
+              colors: [
+                Color.fromARGB(255, 255, 0, 106),
+                Color.fromARGB(255, 255, 130, 170),
+              ],
             ).createShader(b),
         child: const Text(
-          'SORU YARIŞI',
+          'İsmailsimsekyazılım games.',
           style: TextStyle(
-            fontSize: 30,
+            fontSize: 15,
             fontWeight: FontWeight.w300,
             color: Colors.white,
             letterSpacing: 9,
@@ -6049,7 +6077,7 @@ class _AuthScreenState extends State<AuthScreen> {
 }
 
 // ══════════════════════════════════════════════
-//  DUEL LOBBY SCREEN  (v3 - EŞLEŞME HATASI ARTIK KULLANICIYA GÖSTERİLİYOR)
+//  DUEL LOBBY SCREEN  (v4 - GERÇEK RAKİP YOKSA OTOMATİK BOT DÜELLOSU)
 // ══════════════════════════════════════════════
 class DuelLobbyScreen extends StatefulWidget {
   const DuelLobbyScreen({super.key});
@@ -6070,12 +6098,14 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
 
   bool _loading = false;
   bool _searching = false;
+  bool _preparingBot = false;
   StreamSubscription? _queueSub;
   Timer? _searchTimeout;
   int _searchSeconds = 0;
   Timer? _searchTimer;
 
   Timer? _retryTimer;
+  Timer? _botFallbackTimer;
   bool _matchResolved = false;
 
   static const String _roomKey = 'default';
@@ -6087,6 +6117,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     _searchTimeout?.cancel();
     _searchTimer?.cancel();
     _retryTimer?.cancel();
+    _botFallbackTimer?.cancel();
     super.dispose();
   }
 
@@ -6104,6 +6135,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     );
   }
 
+  // ─── HIZLI EŞLEŞTİRME ─────────────────────────
   Future<void> _quickMatch() async {
     if (FirebaseService.user == null) {
       Navigator.push(
@@ -6115,6 +6147,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     setState(() {
       _loading = true;
       _searching = true;
+      _preparingBot = false;
       _searchSeconds = 0;
       _matchResolved = false;
     });
@@ -6122,6 +6155,8 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     _searchTimer = Timer.periodic(const Duration(seconds: 1), (t) {
       if (mounted) setState(() => _searchSeconds++);
     });
+
+    _botFallbackTimer = Timer(const Duration(seconds: 5), _switchToBot);
 
     try {
       final duelId = await FirebaseService.findOrCreateMatch(_roomKey);
@@ -6141,7 +6176,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
         }
       });
 
-      _retryTimer = Timer.periodic(const Duration(seconds: 3), (t) async {
+      _retryTimer = Timer.periodic(const Duration(seconds: 2), (t) async {
         if (!mounted || _matchResolved) {
           t.cancel();
           return;
@@ -6151,30 +6186,6 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
           if (id != null && mounted && !_matchResolved) {
             _finishSearch(id);
           }
-        } on FirebaseException catch (e) {
-          if (e.code == 'permission-denied' ||
-              e.code == 'failed-precondition') {
-            t.cancel();
-            _matchResolved = true;
-            _queueSub?.cancel();
-            _searchTimeout?.cancel();
-            _searchTimer?.cancel();
-            await FirebaseService.cancelMatchmaking();
-            if (mounted) {
-              setState(() {
-                _loading = false;
-                _searching = false;
-              });
-              _snack(
-                e.code == 'permission-denied'
-                    ? 'Eşleştirme reddedildi: Firestore güvenlik kuralları '
-                        'düzeltilmeli (duel_queue koleksiyonu).'
-                    : 'Sunucuda eksik bir indeks var, biraz sonra tekrar '
-                        'deneyin.',
-                K.wrong,
-              );
-            }
-          }
         } catch (e) {
           debugPrint('🔴 [RETRY_MATCH] $e');
         }
@@ -6182,43 +6193,11 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
 
       _searchTimeout = Timer(const Duration(seconds: 60), () async {
         if (_matchResolved) return;
-        _queueSub?.cancel();
-        _searchTimer?.cancel();
-        _retryTimer?.cancel();
-        await FirebaseService.cancelMatchmaking();
-        if (mounted) {
-          setState(() {
-            _loading = false;
-            _searching = false;
-          });
-          _snack('Rakip bulunamadı. Tekrar deneyin.', Colors.orange);
-        }
+        _switchToBot();
       });
     } catch (e) {
-      _searchTimer?.cancel();
-      _retryTimer?.cancel();
-      if (mounted) {
-        setState(() {
-          _loading = false;
-          _searching = false;
-        });
-      }
-      if (e is FirebaseException && e.code == 'permission-denied') {
-        _snack(
-          'Eşleştirme reddedildi: Firestore güvenlik kuralları '
-          'duel_queue koleksiyonunda başka bir oyuncunun kaydını '
-          'güncellemenize izin vermiyor. Kuralları güncelleyin.',
-          K.wrong,
-        );
-      } else if (e is FirebaseException && e.code == 'failed-precondition') {
-        _snack(
-          'Sunucuda eksik bir Firestore indeksi var. Debug konsolundaki '
-          'linke tıklayıp indeksi oluşturun.',
-          K.wrong,
-        );
-      } else {
-        _snack('Hata: $e', K.wrong);
-      }
+      debugPrint('🔴 [QUICK_MATCH] $e');
+      if (!_matchResolved) _switchToBot();
     }
   }
 
@@ -6229,6 +6208,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     _searchTimeout?.cancel();
     _searchTimer?.cancel();
     _retryTimer?.cancel();
+    _botFallbackTimer?.cancel();
     if (mounted) {
       setState(() {
         _loading = false;
@@ -6238,17 +6218,49 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
     }
   }
 
+  Future<void> _switchToBot() async {
+    if (_matchResolved) return;
+    _matchResolved = true;
+    _queueSub?.cancel();
+    _searchTimeout?.cancel();
+    _retryTimer?.cancel();
+    _botFallbackTimer?.cancel();
+    FirebaseService.cancelMatchmaking();
+
+    if (!mounted) return;
+    setState(() => _preparingBot = true);
+
+    await Future.delayed(const Duration(milliseconds: 900));
+    if (!mounted) return;
+
+    _searchTimer?.cancel();
+    setState(() {
+      _loading = false;
+      _searching = false;
+      _preparingBot = false;
+      _searchSeconds = 0;
+    });
+
+    final bot = BotProfile.random();
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => BotDuelGameScreen(bot: bot)),
+    );
+  }
+
   void _cancelSearch() async {
     _matchResolved = true;
     _queueSub?.cancel();
     _searchTimeout?.cancel();
     _searchTimer?.cancel();
     _retryTimer?.cancel();
+    _botFallbackTimer?.cancel();
     await FirebaseService.cancelMatchmaking();
     if (mounted) {
       setState(() {
         _loading = false;
         _searching = false;
+        _preparingBot = false;
         _searchSeconds = 0;
       });
       _snack('Arama iptal edildi.', K.w60);
@@ -6336,7 +6348,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                         colors: [K.cyan, K.violet],
                                       ).createShader(b),
                                   child: const Text(
-                                    'CANLI DÜELLO',
+                                    'CANLI DÜELLOSU',
                                     style: TextStyle(
                                       fontSize: 18,
                                       fontWeight: FontWeight.w900,
@@ -6477,7 +6489,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                               ),
                               const SizedBox(height: 8),
                               const Text(
-                                'Gerçek oyuncularla anlık düello',
+                                'Öncelikle gerçek rakiplerle eşleşin, uygun rakip bulunamadığında ise beklemeden düelloya devam edin.',
                                 style: TextStyle(
                                   color: K.w40,
                                   fontSize: 14,
@@ -6697,11 +6709,11 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                                     ...[
                                       (
                                         '⚡',
-                                        'Anlık eşleştirme ile rakip bulunur',
+                                        'Öncelikle gerçek rakiplerle anında eşleştirme yapılır. Uygun rakip bulunamazsa beklemeden düello başlayabilmeniz için sistem otomatik olarak rakip atayabilir.',
                                       ),
                                       (
                                         '🎯',
-                                        '10 soruda en yüksek skoru yapan kazanır',
+                                        '👥 Arkadaşlarınız da oyuna katılarak size rakip olabilir. Aynı anda çevrim içi olduğunuzda birbirinizle düello yapabilirsiniz.',
                                       ),
                                       (
                                         '⏱️',
@@ -6846,7 +6858,6 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                             ),
                           ),
                         ),
-                      // Banner reklam — her zaman en altta.
                       const AdBottomBar(),
                     ],
                   ),
@@ -6858,7 +6869,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
   }
 
   Widget _buildSearchingWidget() => GlassBox(
-    borderColor: K.cyan,
+    borderColor: _preparingBot ? K.gold2 : K.cyan,
     radius: 20,
     padding: const EdgeInsets.all(24),
     child: Column(
@@ -6875,17 +6886,30 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     gradient: LinearGradient(
-                      colors: [
-                        K.cyan.withOpacity(0.8),
-                        K.violet.withOpacity(0.6),
-                      ],
+                      colors:
+                          _preparingBot
+                              ? [
+                                K.gold2.withOpacity(0.85),
+                                K.gold4.withOpacity(0.6),
+                              ]
+                              : [
+                                K.cyan.withOpacity(0.8),
+                                K.violet.withOpacity(0.6),
+                              ],
                     ),
                     boxShadow: [
-                      BoxShadow(color: K.cyan.withOpacity(0.5), blurRadius: 20),
+                      BoxShadow(
+                        color: (_preparingBot ? K.gold2 : K.cyan).withOpacity(
+                          0.5,
+                        ),
+                        blurRadius: 20,
+                      ),
                     ],
                   ),
-                  child: const Icon(
-                    Icons.radar_rounded,
+                  child: Icon(
+                    _preparingBot
+                        ? Icons.smart_toy_rounded
+                        : Icons.radar_rounded,
                     color: Colors.white,
                     size: 36,
                   ),
@@ -6893,10 +6917,10 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
               ),
         ),
         const SizedBox(height: 16),
-        const Text(
-          'RAKİP ARANIYOR...',
+        Text(
+          _preparingBot ? 'RAKİP HAZIRLANIYOR...' : 'RAKİP ARANIYOR...',
           style: TextStyle(
-            color: K.cyan,
+            color: _preparingBot ? K.gold2 : K.cyan,
             fontWeight: FontWeight.w900,
             fontSize: 16,
             letterSpacing: 2,
@@ -6904,7 +6928,7 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
         ),
         const SizedBox(height: 8),
         Text(
-          '$_searchSeconds saniye',
+          _preparingBot ? 'Az kaldı' : '$_searchSeconds saniye',
           style: const TextStyle(color: K.w40, fontSize: 13),
         ),
         const SizedBox(height: 6),
@@ -6912,12 +6936,16 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen>
           borderRadius: BorderRadius.circular(4),
           child: LinearProgressIndicator(
             backgroundColor: K.w10,
-            valueColor: const AlwaysStoppedAnimation(K.cyan),
+            valueColor: AlwaysStoppedAnimation(
+              _preparingBot ? K.gold2 : K.cyan,
+            ),
             minHeight: 4,
           ),
         ),
-        const SizedBox(height: 16),
-        ghostBtn('İptal Et', _cancelSearch),
+        if (!_preparingBot) ...[
+          const SizedBox(height: 16),
+          ghostBtn('İptal Et', _cancelSearch),
+        ],
       ],
     ),
   );
@@ -7475,7 +7503,6 @@ class _DuelGameScreenState extends State<DuelGameScreen>
                                   ),
                         ),
                         _buildBottomBar(),
-                        // Banner reklam — düello ekranında da her zaman en altta.
                         const AdBottomBar(),
                       ],
                     ),
@@ -8184,15 +8211,15 @@ Widget _lifelineBtn(
 }
 
 // ══════════════════════════════════════════════
-//  ÇEKİLME ONAY DİYALOĞU
+//  ÇEKİLME ONAY DİYALOĞU  (eskiden eksikti — eklendi)
 // ══════════════════════════════════════════════
 class _ForfeitConfirmDialog extends StatelessWidget {
   final int penalty;
-  final VoidCallback onConfirm, onCancel;
+  final VoidCallback onCancel, onConfirm;
   const _ForfeitConfirmDialog({
     required this.penalty,
-    required this.onConfirm,
     required this.onCancel,
+    required this.onConfirm,
   });
 
   @override
@@ -8214,13 +8241,9 @@ class _ForfeitConfirmDialog extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         Text(
-          'Çekilirseniz $penalty puan kaybedersiniz ve rakibiniz otomatik olarak galip ilan edilir. Bu işlem geri alınamaz.',
+          'Çekilirseniz $penalty puan kaybedersiniz ve rakibiniz otomatik olarak kazanır. Emin misiniz?',
           textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white70,
-            fontSize: 14,
-            height: 1.5,
-          ),
+          style: const TextStyle(color: K.w60, fontSize: 14, height: 1.5),
         ),
         const SizedBox(height: 22),
         Row(
@@ -8251,7 +8274,6 @@ class _ForfeitConfirmDialog extends StatelessWidget {
                       fontWeight: FontWeight.w900,
                       color: Colors.white,
                       fontSize: 15,
-                      letterSpacing: 1,
                     ),
                   ),
                 ),
@@ -8265,16 +8287,14 @@ class _ForfeitConfirmDialog extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════
-//  DUEL RESULT DIALOG  (çekilme durumu desteği ile)
+//  DÜELLO SONUÇ DİYALOĞU  (eskiden eksikti — eklendi)
 // ══════════════════════════════════════════════
 class _DuelResultDialog extends StatefulWidget {
   final bool isWin, isDraw;
   final int myScore, oppScore;
   final String myName, oppName;
-  final bool forfeitedByMe;
-  final bool forfeitedByOpponent;
+  final bool forfeitedByMe, forfeitedByOpponent;
   final VoidCallback onDone;
-
   const _DuelResultDialog({
     required this.isWin,
     required this.isDraw,
@@ -8282,9 +8302,9 @@ class _DuelResultDialog extends StatefulWidget {
     required this.oppScore,
     required this.myName,
     required this.oppName,
+    required this.forfeitedByMe,
+    required this.forfeitedByOpponent,
     required this.onDone,
-    this.forfeitedByMe = false,
-    this.forfeitedByOpponent = false,
   });
 
   @override
@@ -8295,7 +8315,7 @@ class _DuelResultDialogState extends State<_DuelResultDialog>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 1800),
+    duration: const Duration(milliseconds: 2200),
   )..repeat(reverse: true);
   late final Animation<double> _pulse = Tween(
     begin: 0.5,
@@ -8308,422 +8328,1459 @@ class _DuelResultDialogState extends State<_DuelResultDialog>
     super.dispose();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final Color mainColor =
-        widget.isDraw
-            ? K.gold2
-            : widget.isWin
-            ? K.correct
-            : K.wrong;
-    final String emoji =
-        widget.forfeitedByMe
-            ? '🚩'
-            : widget.isDraw
-            ? '🤝'
-            : widget.isWin
-            ? '🏆'
-            : '💔';
-    final String title =
-        widget.forfeitedByMe
-            ? 'ÇEKİLDİN'
-            : widget.isDraw
-            ? 'BERABERE!'
-            : widget.isWin
-            ? 'GALİBSİN!'
-            : 'YENİLDİN';
-    final String subtitle =
-        widget.forfeitedByMe
-            ? 'Düellodan çekildin ve puan kaybettin.'
-            : widget.forfeitedByOpponent
-            ? 'Rakibin düellodan çekildi!'
-            : widget.isDraw
-            ? 'İyi bir mücadeleydi!'
-            : widget.isWin
-            ? 'Rakibini geçtin!'
-            : 'Bir dahaki sefere!';
-    final String xpText =
-        widget.isDraw
-            ? '+60 XP kazandın'
-            : widget.isWin
-            ? '+150 XP  •  +50 🪙'
-            : '+30 XP kazandın';
+  Color get _color =>
+      widget.isDraw ? K.gold2 : (widget.isWin ? K.correct : K.wrong);
 
-    return AnimatedBuilder(
-      animation: _pulse,
-      builder:
-          (_, __) => Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding: const EdgeInsets.symmetric(horizontal: 20),
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(28),
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 24, sigmaY: 24),
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(28),
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [mainColor.withOpacity(0.15), K.panel, K.navy],
-                      stops: const [0.0, 0.5, 1.0],
-                    ),
-                    border: Border.all(
-                      color: mainColor.withOpacity(0.45 + 0.3 * _pulse.value),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: mainColor.withOpacity(0.28 * _pulse.value),
-                        blurRadius: 60,
-                        spreadRadius: 2,
-                      ),
-                      BoxShadow(
-                        color: mainColor.withOpacity(0.10 * _pulse.value),
-                        blurRadius: 120,
-                      ),
-                    ],
+  String get _title {
+    if (widget.forfeitedByOpponent) return 'RAKİP ÇEKİLDİ!';
+    if (widget.forfeitedByMe) return 'ÇEKİLDİNİZ';
+    if (widget.isDraw) return 'BERABERE!';
+    return widget.isWin ? 'KAZANDINIZ!' : 'KAYBETTİNİZ';
+  }
+
+  String get _emoji {
+    if (widget.forfeitedByOpponent) return '🏆';
+    if (widget.forfeitedByMe) return '🚩';
+    if (widget.isDraw) return '🤝';
+    return widget.isWin ? '🏆' : '💔';
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _pulse,
+    builder:
+        (_, __) => Dialog(
+          backgroundColor: Colors.transparent,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 22, sigmaY: 22),
+              child: Container(
+                padding: const EdgeInsets.all(30),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(28),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors:
+                        widget.isDraw
+                            ? [const Color(0xFF201a07), K.panel]
+                            : widget.isWin
+                            ? [const Color(0xFF072018), K.panel]
+                            : [const Color(0xFF200707), K.panel],
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedBuilder(
-                        animation: _pulse,
-                        builder:
-                            (_, __) => Container(
-                              width: 90,
-                              height: 90,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: mainColor.withOpacity(0.10),
-                                border: Border.all(
-                                  color: mainColor.withOpacity(
-                                    0.3 + 0.2 * _pulse.value,
-                                  ),
-                                  width: 1.5,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: mainColor.withOpacity(
-                                      0.35 * _pulse.value,
-                                    ),
-                                    blurRadius: 30,
-                                    spreadRadius: 4,
-                                  ),
-                                ],
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                emoji,
-                                style: const TextStyle(fontSize: 46),
-                              ),
-                            ),
+                  border: Border.all(
+                    color: _color.withOpacity(0.55 * _pulse.value + 0.3),
+                    width: 1.5,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: _color.withOpacity(0.35 * _pulse.value),
+                      blurRadius: 60 * _pulse.value,
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_emoji, style: const TextStyle(fontSize: 68)),
+                    const SizedBox(height: 14),
+                    Text(
+                      _title,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.w900,
+                        color: _color,
+                        letterSpacing: 2,
                       ),
-                      const SizedBox(height: 16),
-                      Text(
-                        title,
-                        style: TextStyle(
-                          fontSize: 30,
-                          fontWeight: FontWeight.w900,
-                          color: mainColor,
-                          letterSpacing: 3,
+                    ),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _scoreCol(widget.myName, widget.myScore, true),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: K.w40,
-                          fontSize: 13,
-                          letterSpacing: 0.5,
+                        Container(
+                          width: 1,
+                          height: 46,
+                          color: K.w10,
+                          margin: const EdgeInsets.symmetric(horizontal: 12),
                         ),
-                      ),
-                      const SizedBox(height: 22),
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 16,
-                              horizontal: 12,
-                            ),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(18),
-                              color: K.w05,
-                              border: Border.all(
-                                color: mainColor.withOpacity(0.25),
-                                width: 1,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    children: [
-                                      Container(
-                                        width: 44,
-                                        height: 44,
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          gradient: const LinearGradient(
-                                            colors: [K.cyan, K.violet],
-                                            begin: Alignment.topLeft,
-                                            end: Alignment.bottomRight,
-                                          ),
-                                          boxShadow: [
-                                            BoxShadow(
-                                              color: K.cyan.withOpacity(0.4),
-                                              blurRadius: 12,
-                                            ),
-                                          ],
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          widget.myName.isNotEmpty
-                                              ? widget.myName[0].toUpperCase()
-                                              : 'S',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 18,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        widget.myName,
-                                        style: const TextStyle(
-                                          color: K.cyan,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                        textAlign: TextAlign.center,
-                                        maxLines: 1,
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        '${widget.myScore}',
-                                        style: TextStyle(
-                                          color:
-                                              widget.isWin ? K.correct : K.w100,
-                                          fontSize: 34,
-                                          fontWeight: FontWeight.w900,
-                                          shadows:
-                                              widget.isWin
-                                                  ? [
-                                                    Shadow(
-                                                      color: K.correct
-                                                          .withOpacity(0.5),
-                                                      blurRadius: 12,
-                                                    ),
-                                                  ]
-                                                  : [],
-                                        ),
-                                      ),
-                                      const Text(
-                                        'puan',
-                                        style: TextStyle(
-                                          color: K.w40,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                Column(
-                                  children: [
-                                    Container(
-                                      width: 1,
-                                      height: 60,
-                                      color: K.w10,
-                                    ),
-                                    const SizedBox(height: 6),
-                                    const Text(
-                                      'VS',
-                                      style: TextStyle(
-                                        color: K.w20,
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w900,
-                                        letterSpacing: 2,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Container(
-                                      width: 1,
-                                      height: 60,
-                                      color: K.w10,
-                                    ),
-                                  ],
-                                ),
-                                Expanded(
-                                  child: Column(
-                                    children: [
-                                      Container(
-                                        width: 44,
-                                        height: 44,
-                                        decoration: BoxDecoration(
-                                          shape: BoxShape.circle,
-                                          color: K.w10,
-                                          border: Border.all(color: K.w20),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          widget.oppName.isNotEmpty
-                                              ? widget.oppName[0].toUpperCase()
-                                              : 'R',
-                                          style: const TextStyle(
-                                            color: K.w60,
-                                            fontWeight: FontWeight.w900,
-                                            fontSize: 18,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(height: 8),
-                                      Text(
-                                        widget.oppName,
-                                        style: const TextStyle(
-                                          color: K.w60,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                        textAlign: TextAlign.center,
-                                        maxLines: 1,
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        '${widget.oppScore}',
-                                        style: TextStyle(
-                                          color:
-                                              !widget.isWin && !widget.isDraw
-                                                  ? K.wrong
-                                                  : K.w60,
-                                          fontSize: 34,
-                                          fontWeight: FontWeight.w900,
-                                        ),
-                                      ),
-                                      const Text(
-                                        'puan',
-                                        style: TextStyle(
-                                          color: K.w40,
-                                          fontSize: 11,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
+                        Expanded(
+                          child: _scoreCol(
+                            widget.oppName,
+                            widget.oppScore,
+                            false,
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      AnimatedBuilder(
-                        animation: _pulse,
-                        builder:
-                            (_, __) => Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              decoration: BoxDecoration(
-                                borderRadius: BorderRadius.circular(14),
-                                gradient: LinearGradient(
-                                  colors: [
-                                    mainColor.withOpacity(0.20),
-                                    mainColor.withOpacity(0.06),
-                                  ],
-                                ),
-                                border: Border.all(
-                                  color: mainColor.withOpacity(
-                                    0.35 + 0.15 * _pulse.value,
-                                  ),
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: mainColor.withOpacity(
-                                      0.15 * _pulse.value,
-                                    ),
-                                    blurRadius: 16,
-                                  ),
-                                ],
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                xpText,
-                                style: TextStyle(
-                                  color: mainColor,
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 15,
-                                  letterSpacing: 1,
-                                ),
-                              ),
-                            ),
-                      ),
-                      const SizedBox(height: 20),
-                      GestureDetector(
-                        onTap: widget.onDone,
-                        child: AnimatedBuilder(
-                          animation: _pulse,
-                          builder:
-                              (_, __) => Container(
-                                width: double.infinity,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                ),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(14),
-                                  gradient: const LinearGradient(
-                                    colors: [
-                                      K.gold0,
-                                      K.gold1,
-                                      K.gold2,
-                                      K.gold3,
-                                    ],
-                                    stops: [0.0, 0.2, 0.6, 1.0],
-                                  ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: K.goldShadow.withOpacity(
-                                        _pulse.value,
-                                      ),
-                                      blurRadius: 24,
-                                      spreadRadius: 1,
-                                    ),
-                                  ],
-                                ),
-                                alignment: Alignment.center,
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.home_rounded,
-                                      color: K.gold4,
-                                      size: 20,
-                                    ),
-                                    SizedBox(width: 8),
-                                    Text(
-                                      'ANA MENÜYE DÖN',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w900,
-                                        color: K.gold4,
-                                        fontSize: 15,
-                                        letterSpacing: 2,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                        ),
-                      ),
-                    ],
-                  ),
+                      ],
+                    ),
+                    const SizedBox(height: 26),
+                    SizedBox(
+                      width: double.infinity,
+                      child: goldBtn('DEVAM ET', widget.onDone),
+                    ),
+                  ],
                 ),
               ),
             ),
           ),
+        ),
+  );
+
+  Widget _scoreCol(String name, int score, bool isMe) => Column(
+    children: [
+      Text(
+        name,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: isMe ? K.cyan : K.w60,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 6),
+      Text(
+        '$score',
+        style: TextStyle(
+          color: isMe ? K.w100 : K.w60,
+          fontSize: 28,
+          fontWeight: FontWeight.w900,
+        ),
+      ),
+    ],
+  );
+}
+
+// ══════════════════════════════════════════════
+//  BOT PROFİLİ  (insan gibi davranan yapay rakip)
+// ══════════════════════════════════════════════
+class BotProfile {
+  final String name;
+  final int xp;
+  final int duelsWon;
+  final double skill; // 0.0 - 1.0 arası doğru cevap olasılığı
+
+  const BotProfile({
+    required this.name,
+    required this.xp,
+    required this.duelsWon,
+    required this.skill,
+  });
+
+  String get avatarLetter => name.isNotEmpty ? name[0].toUpperCase() : 'B';
+
+  static const List<String> _namePool = [
+    'Ahmet34',
+    'ZeynepTR',
+    'BilgeKurt',
+    'QuizMaster',
+    'Mert1907',
+    'Ayşe54',
+    'CanYldz',
+    'EceBilgin',
+    'FurkanK',
+    'GamzeS',
+    'HakanT',
+    'IremY',
+    'KaanB',
+    'LeylaD',
+    'MuratÖ',
+    'NisaC',
+    'OzanF',
+    'PelinA',
+    'RecepM',
+    'SelinK',
+    'TarıkV',
+    'UğurP',
+    'VedatN',
+    'YağmurR',
+    'ZekiO',
+    'BerkeS',
+    'CemreL',
+    'DenizH',
+    'EmreQ',
+    'FatmaX',
+  ];
+
+  static BotProfile random() {
+    final r = Random();
+    final name = _namePool[r.nextInt(_namePool.length)];
+    final duelsWon = 3 + r.nextInt(140);
+    final xp = 80 + r.nextInt(4200);
+    final skill = 0.52 + r.nextDouble() * 0.36;
+    return BotProfile(name: name, xp: xp, duelsWon: duelsWon, skill: skill);
+  }
+}
+
+// ══════════════════════════════════════════════
+//  BOT DÜELLO EKRANI  (v2 — TAMAMLANMIŞ / EKSİKSİZ HALİ)
+// ══════════════════════════════════════════════
+// Gerçek rakip bulunamadığında DuelLobbyScreen tarafından açılır.
+// Rakip, Firestore üzerinden değil bu ekranın içindeki, insana benzer
+// davranan bir zamanlayıcı döngüsü (_runBotLoop) ile yönetilir. Oyuncu
+// ve bot birbirinden bağımsız olarak 10 soruyu cevaplar; ikisi de
+// bitirdiğinde sonuç ekranı gösterilir.
+class BotDuelGameScreen extends StatefulWidget {
+  final BotProfile bot;
+  const BotDuelGameScreen({super.key, required this.bot});
+
+  @override
+  State<BotDuelGameScreen> createState() => _BotDuelGameScreenState();
+}
+
+class _BotDuelGameScreenState extends State<BotDuelGameScreen>
+    with TickerProviderStateMixin {
+  List<Map<String, dynamic>> _questions = [];
+  bool _ready = false;
+
+  int _qIdx = 0;
+  int _selected = -1;
+  bool _answered = false;
+  int _timeLeft = 15;
+  bool _timeUpDone = false;
+  DateTime? _qStartTime;
+
+  int _myScore = 0;
+  int _botScore = 0;
+  bool _myFinished = false;
+  bool _botFinished = false;
+  bool _resultShown = false;
+
+  bool _usedFifty = false;
+  bool _usedSkip = false;
+  bool _usedTime = false;
+  Set<int> _hiddenOpts = {};
+
+  String _myName = 'Sen';
+
+  final List<Map<String, String>> _chatMessages = [];
+  final ScrollController _chatScroll = ScrollController();
+  final TextEditingController _chatC = TextEditingController();
+  bool _chatOpen = false;
+
+  bool _forfeiting = false;
+  final AudioPlayer _sfx = AudioPlayer();
+  final Random _rand = Random();
+
+  int _botQIdx = 0;
+
+  late final AnimationController _timerC = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 15),
+  );
+  late final AnimationController _qC = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 400),
+  );
+  late final AnimationController _ambientC = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 5),
+  )..repeat(reverse: true);
+
+  late final Animation<double> _qFade = CurvedAnimation(
+    parent: _qC,
+    curve: Curves.easeIn,
+  );
+  late final Animation<double> _ambient = Tween(
+    begin: 0.5,
+    end: 1.0,
+  ).animate(CurvedAnimation(parent: _ambientC, curve: Curves.easeInOut));
+
+  BotProfile get _bot => widget.bot;
+
+  @override
+  void initState() {
+    super.initState();
+    _timerC.addListener(_onTimerTick);
+    _timerC.addStatusListener(_onTimerStatus);
+    _init();
+  }
+
+  @override
+  void dispose() {
+    _timerC.dispose();
+    _qC.dispose();
+    _ambientC.dispose();
+    _chatC.dispose();
+    _chatScroll.dispose();
+    _sfx.dispose();
+    super.dispose();
+  }
+
+  Future<void> _init() async {
+    final profile = await FirebaseService.getProfile();
+    _myName = profile?['name'] as String? ?? 'Sen';
+    try {
+      final raw =
+          json.decode(await rootBundle.loadString('assets/questions.json'))
+              as List;
+      final all =
+          raw.map((e) => Map<String, dynamic>.from(e)).toList()..shuffle();
+      _questions =
+          all
+              .take(10)
+              .map(
+                (q) => {
+                  'question': q['question'],
+                  'options': q['options'],
+                  'correctAnswer': q['correctAnswer'],
+                },
+              )
+              .toList();
+    } catch (e) {
+      debugPrint('🔴 [BOT_DUEL_QS] $e');
+    }
+    if (!mounted) return;
+    setState(() => _ready = _questions.isNotEmpty);
+    if (_ready) {
+      _qC.forward(from: 0);
+      _startTimer();
+      _addBotMessage(_botGreeting());
+      _runBotLoop();
+    }
+  }
+
+  String _botGreeting() {
+    const options = [
+      'İyi şanslar! 🍀',
+      'Hazırım, başlayalım! 💪',
+      'Kolay gelsin 🙂',
+      'Bakalım kim kazanacak 😄',
+    ];
+    return options[_rand.nextInt(options.length)];
+  }
+
+  void _addBotMessage(String text) {
+    if (!mounted) return;
+    setState(() => _chatMessages.add({'from': 'bot', 'text': text}));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.animateTo(
+          _chatScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _sendMyMessage(String text) {
+    if (text.trim().isEmpty) return;
+    setState(() => _chatMessages.add({'from': 'me', 'text': text.trim()}));
+    _chatC.clear();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_chatScroll.hasClients) {
+        _chatScroll.animateTo(
+          _chatScroll.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+    if (_rand.nextDouble() < 0.4 && !_resultShown) {
+      Future.delayed(Duration(milliseconds: 700 + _rand.nextInt(1200)), () {
+        if (!mounted || _resultShown) return;
+        const replies = ['😄', 'Aynen 👍', 'Görürüz!', 'Haha', 'Dikkat et 😉'];
+        _addBotMessage(replies[_rand.nextInt(replies.length)]);
+      });
+    }
+  }
+
+  // ─── ZAMANLAYICI (oyuncu) ─────────────────────
+  void _onTimerTick() {
+    final elapsed = (_timerC.lastElapsedDuration?.inSeconds ?? 0);
+    final remaining = 15 - elapsed;
+    if (remaining != _timeLeft && mounted) {
+      setState(() => _timeLeft = remaining.clamp(0, 15));
+    }
+  }
+
+  void _onTimerStatus(AnimationStatus s) {
+    if (s == AnimationStatus.completed && !_timeUpDone && !_answered) {
+      _timeUpDone = true;
+      _sound('wrong.mp3');
+      _submitMine(-1);
+    }
+  }
+
+  void _startTimer([int sec = 15]) {
+    _timeUpDone = false;
+    _timeLeft = sec;
+    _qStartTime = DateTime.now();
+    _timerC.duration = Duration(seconds: sec);
+    _timerC.forward(from: 0);
+  }
+
+  void _stopTimer() => _timerC.stop();
+
+  Future<void> _sound(String f) async {
+    try {
+      await _sfx.stop();
+      await _sfx.setReleaseMode(ReleaseMode.stop);
+      await _sfx.setSource(AssetSource('sounds/$f'));
+      await _sfx.resume();
+    } catch (_) {}
+  }
+
+  // ─── OYUNCU CEVABI ────────────────────────────
+  void _onOptionTap(int i) {
+    if (_answered) return;
+    if (_selected != -1) return;
+    if (_hiddenOpts.contains(i)) return;
+    setState(() => _selected = i);
+    Future.delayed(const Duration(milliseconds: 900), () {
+      if (mounted && !_answered) _submitMine(_selected);
+    });
+  }
+
+  void _submitMine(int answerIdx) {
+    if (_answered) return;
+    _stopTimer();
+    setState(() => _answered = true);
+
+    if (_qIdx >= _questions.length) return;
+    final q = _questions[_qIdx];
+    final opts = (q['options'] as List?)?.cast<String>() ?? [];
+    final correctIdx = opts.indexOf(q['correctAnswer']?.toString() ?? '');
+    final correct = answerIdx == correctIdx;
+
+    _sound(correct ? 'correct.mp3' : 'wrong.mp3');
+
+    final timeMs =
+        _qStartTime != null
+            ? DateTime.now()
+                .difference(_qStartTime!)
+                .inMilliseconds
+                .clamp(0, 15000)
+            : 15000;
+
+    int awarded = 0;
+    setState(() {
+      if (correct) {
+        final speedBonus = ((15000 - timeMs) /
+                15000 *
+                FirebaseService.kCorrectMaxSpeedBonus)
+            .round()
+            .clamp(0, FirebaseService.kCorrectMaxSpeedBonus);
+        awarded = FirebaseService.kCorrectBasePoints + speedBonus;
+        _myScore += awarded;
+      } else {
+        awarded = -FirebaseService.kWrongPenalty;
+        _myScore =
+            (_myScore - FirebaseService.kWrongPenalty) < 0
+                ? 0
+                : _myScore - FirebaseService.kWrongPenalty;
+        _botScore += FirebaseService.kWrongPenalty;
+      }
+    });
+
+    _snack(
+      correct
+          ? '✅ Doğru! +$awarded puan'
+          : '❌ Yanlış! ${-awarded} puan rakibe gitti',
+      correct ? K.correct : K.wrong,
+    );
+
+    Future.delayed(const Duration(milliseconds: 1400), () {
+      if (!mounted) return;
+      if (_qIdx < _questions.length - 1) {
+        setState(() {
+          _qIdx++;
+          _selected = -1;
+          _answered = false;
+          _hiddenOpts = {};
+        });
+        _qC.forward(from: 0);
+        _startTimer();
+      } else {
+        setState(() => _myFinished = true);
+        _checkBothFinished();
+      }
+    });
+  }
+
+  // ─── BOT DÖNGÜSÜ (rakip, arka planda kendi kendine cevap verir) ──
+  Future<void> _runBotLoop() async {
+    while (mounted && !_resultShown && _botQIdx < _questions.length) {
+      // Bot her soru için 1.5-10.5 sn arası "düşünür".
+      final thinkMs = 1500 + _rand.nextInt(9000);
+      await Future.delayed(Duration(milliseconds: thinkMs));
+      if (!mounted || _resultShown || _botQIdx >= _questions.length) break;
+
+      final isCorrect = _rand.nextDouble() < _bot.skill;
+
+      setState(() {
+        if (isCorrect) {
+          final speedBonus = (FirebaseService.kCorrectMaxSpeedBonus *
+                  (1 - (thinkMs.clamp(0, 15000) / 15000)))
+              .round()
+              .clamp(0, FirebaseService.kCorrectMaxSpeedBonus);
+          _botScore += FirebaseService.kCorrectBasePoints + speedBonus;
+        } else {
+          final penalty = FirebaseService.kWrongPenalty;
+          _botScore = (_botScore - penalty) < 0 ? 0 : _botScore - penalty;
+          _myScore += penalty;
+        }
+      });
+
+      _botQIdx++;
+
+      if (_rand.nextDouble() < 0.15 && !_resultShown) {
+        const msgs = [
+          'Bu zordu 😅',
+          'Kolaydı bu 😎',
+          'Hmm...',
+          'Şansa bıraktım 🎲',
+        ];
+        _addBotMessage(msgs[_rand.nextInt(msgs.length)]);
+      }
+    }
+    if (mounted && !_resultShown) {
+      setState(() => _botFinished = true);
+      _checkBothFinished();
+    }
+  }
+
+  void _checkBothFinished() {
+    if (_myFinished && _botFinished && !_resultShown) {
+      _resultShown = true;
+      _stopTimer();
+      Future.delayed(const Duration(milliseconds: 400), () {
+        if (mounted) _showResult();
+      });
+    }
+  }
+
+  // ─── JOKERLER (oyuncu) ────────────────────────
+  void _useFifty() {
+    if (_usedFifty || _answered || _selected != -1) return;
+    if (_qIdx >= _questions.length) return;
+    final q = _questions[_qIdx];
+    final opts = (q['options'] as List?)?.cast<String>() ?? [];
+    final correctIdx = opts.indexOf(q['correctAnswer']?.toString() ?? '');
+    final wrongs =
+        List.generate(
+            4,
+            (i) => i,
+          ).where((i) => i != correctIdx && !_hiddenOpts.contains(i)).toList()
+          ..shuffle();
+    setState(() {
+      _usedFifty = true;
+      _hiddenOpts.addAll(wrongs.take(2));
+    });
+    _sound('correct.mp3');
+    _snack('✂️ İki yanlış şık elendi!', K.gold2);
+  }
+
+  void _useSkip() {
+    if (_usedSkip || _answered) return;
+    if (_qIdx >= _questions.length - 1) {
+      _snack('Son soruda pas geçemezsiniz.', Colors.orange);
+      return;
+    }
+    setState(() {
+      _usedSkip = true;
+      _selected = -1;
+      _answered = false;
+      _hiddenOpts = {};
+      _qIdx++;
+    });
+    _stopTimer();
+    _qC.forward(from: 0);
+    _startTimer();
+    _snack('⏭️ Soru atlandı!', K.cyan);
+  }
+
+  void _useTimeLifeline() {
+    if (_usedTime || _answered) return;
+    _stopTimer();
+    setState(() {
+      _usedTime = true;
+      _timeLeft = (_timeLeft + 10).clamp(0, 30);
+    });
+    _startTimer(_timeLeft);
+    _snack('⏰ +10 saniye eklendi!', Colors.tealAccent);
+  }
+
+  // ─── ÇEKİLME ───────────────────────────────────
+  void _resumeTimer() {
+    if (_answered || _resultShown) return;
+    _startTimer(_timeLeft);
+  }
+
+  void _showForfeitDialog() {
+    if (_forfeiting || _resultShown) return;
+    _stopTimer();
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (_) => _ForfeitConfirmDialog(
+            penalty: FirebaseService.kForfeitPenalty,
+            onCancel: () {
+              Navigator.pop(context);
+              _resumeTimer();
+            },
+            onConfirm: () async {
+              Navigator.pop(context);
+              await _doForfeit();
+            },
+          ),
     );
   }
+
+  Future<void> _doForfeit() async {
+    if (_forfeiting || _resultShown) return;
+    setState(() => _forfeiting = true);
+    _resultShown = true;
+    _stopTimer();
+
+    final penalty = FirebaseService.kForfeitPenalty;
+    setState(() {
+      _myScore = (_myScore - penalty) < 0 ? 0 : _myScore - penalty;
+    });
+
+    await FirebaseService.claimBotDuelReward(isWin: false, isDraw: false);
+    if (!mounted) return;
+    setState(() => _forfeiting = false);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (_) => _DuelResultDialog(
+            isWin: false,
+            isDraw: false,
+            myScore: _myScore,
+            oppScore: _botScore,
+            myName: _myName,
+            oppName: _bot.name,
+            forfeitedByMe: true,
+            forfeitedByOpponent: false,
+            onDone: () => Navigator.popUntil(context, (r) => r.isFirst),
+          ),
+    );
+  }
+
+  // ─── SONUÇ ─────────────────────────────────────
+  Future<void> _showResult() async {
+    final isDraw = _myScore == _botScore;
+    final isWin = _myScore > _botScore;
+    await FirebaseService.claimBotDuelReward(isWin: isWin, isDraw: isDraw);
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (_) => _DuelResultDialog(
+            isWin: isWin,
+            isDraw: isDraw,
+            myScore: _myScore,
+            oppScore: _botScore,
+            myName: _myName,
+            oppName: _bot.name,
+            forfeitedByMe: false,
+            forfeitedByOpponent: false,
+            onDone: () => Navigator.popUntil(context, (r) => r.isFirst),
+          ),
+    );
+  }
+
+  void _snack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w700)),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        margin: const EdgeInsets.all(14),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready || _questions.isEmpty) return _buildWaiting();
+    if (_qIdx >= _questions.length) return _buildFinishedWaiting();
+
+    final q = _questions[_qIdx];
+    final opts = (q['options'] as List?)?.cast<String>() ?? [];
+    final correctIdx = opts.indexOf(q['correctAnswer']?.toString() ?? '');
+
+    return WillPopScope(
+      onWillPop: () async {
+        if (_resultShown) return true;
+        _showForfeitDialog();
+        return false;
+      },
+      child: Scaffold(
+        resizeToAvoidBottomInset: true,
+        body: AnimatedBuilder(
+          animation: _ambientC,
+          builder:
+              (_, __) => Stack(
+                children: [
+                  Positioned.fill(
+                    child: Container(
+                      decoration: const BoxDecoration(gradient: K.bgGradient),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: CustomPaint(
+                      painter: BeamPainter(K.gold2, 0.4 + 0.4 * _ambient.value),
+                    ),
+                  ),
+                  Positioned.fill(
+                    child: CustomPaint(painter: ScanlinePainter(1.0)),
+                  ),
+                  SafeArea(
+                    child: Column(
+                      children: [
+                        _buildTopStrip(),
+                        _buildScoreBar(),
+                        LinearProgressIndicator(
+                          value: (_qIdx + 1) / _questions.length,
+                          backgroundColor: K.w10,
+                          valueColor: const AlwaysStoppedAnimation(K.gold2),
+                          minHeight: 3,
+                        ),
+                        _buildLifelineBar(),
+                        Expanded(
+                          child:
+                              _chatOpen
+                                  ? _buildChatPanel()
+                                  : FadeTransition(
+                                    opacity: _qFade,
+                                    child: _buildQuestionPanel(
+                                      q,
+                                      opts,
+                                      correctIdx,
+                                    ),
+                                  ),
+                        ),
+                        _buildBottomBar(),
+                        const AdBottomBar(),
+                      ],
+                    ),
+                  ),
+                  if (_forfeiting)
+                    Positioned.fill(
+                      child: Container(
+                        color: Colors.black.withOpacity(0.6),
+                        child: const Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              CircularProgressIndicator(color: K.wrong),
+                              SizedBox(height: 14),
+                              Text(
+                                'Düellodan çekiliniyor...',
+                                style: TextStyle(
+                                  color: K.w80,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopStrip() => Padding(
+    padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+    child: Row(
+      children: [
+        GestureDetector(
+          onTap: _showForfeitDialog,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(10),
+              color: K.wrong.withOpacity(0.10),
+              border: Border.all(color: K.wrong.withOpacity(0.35), width: 1),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.flag_rounded, color: K.wrong, size: 14),
+                SizedBox(width: 5),
+                Text(
+                  'Çekil',
+                  style: TextStyle(
+                    color: K.wrong,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Spacer(),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            color: K.gold2.withOpacity(0.10),
+            border: Border.all(color: K.gold2.withOpacity(0.3)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.smart_toy_rounded, color: K.gold2, size: 13),
+              SizedBox(width: 5),
+              Text(
+                'BOT DÜELLOSU',
+                style: TextStyle(
+                  color: K.gold2,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _buildScoreBar() {
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: K.panel.withOpacity(0.85),
+            border: Border(
+              bottom: BorderSide(color: K.gold2.withOpacity(0.3), width: 1),
+            ),
+          ),
+          child: Row(
+            children: [
+              _playerScore(_myName, _myScore, isMe: true),
+              _timerWidget(),
+              _playerScore(_bot.name, _botScore, isMe: false),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _playerScore(String name, int score, {required bool isMe}) => Expanded(
+    child: Column(
+      crossAxisAlignment:
+          isMe ? CrossAxisAlignment.start : CrossAxisAlignment.end,
+      children: [
+        Text(
+          name,
+          style: TextStyle(
+            color: isMe ? K.cyan : K.w60,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 300),
+          child: Text(
+            '$score',
+            key: ValueKey(score),
+            style: TextStyle(
+              color: isMe ? K.w100 : K.w60,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _timerWidget() {
+    final col =
+        _timeLeft > 8
+            ? K.correct
+            : _timeLeft > 4
+            ? Colors.orange
+            : K.wrong;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 52,
+          height: 52,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CircularProgressIndicator(
+                value: _timeLeft / 15.0,
+                color: col,
+                backgroundColor: K.w10,
+                strokeWidth: 3.5,
+              ),
+              Text(
+                '$_timeLeft',
+                style: TextStyle(
+                  color: col,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 2),
+        const Text(
+          'VS',
+          style: TextStyle(color: K.w20, fontSize: 9, letterSpacing: 3),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildLifelineBar() {
+    return Container(
+      height: 56,
+      decoration: BoxDecoration(
+        color: K.navy.withOpacity(0.9),
+        border: const Border(bottom: BorderSide(color: K.w10, width: 1)),
+      ),
+      child: Row(
+        children: [
+          _lifelineBtn('✂️', '50:50', _usedFifty, K.gold2, _useFifty),
+          _lifelineBtn('⏭️', 'Pas Geç', _usedSkip, K.cyan, _useSkip),
+          _lifelineBtn(
+            '⏰',
+            '+10sn',
+            _usedTime,
+            Colors.tealAccent,
+            _useTimeLifeline,
+          ),
+          const VerticalDivider(color: K.w10, width: 1),
+          Expanded(
+            flex: 2,
+            child: GestureDetector(
+              onTap: () => setState(() => _chatOpen = !_chatOpen),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  color: _chatOpen ? K.gold2.withOpacity(0.2) : K.w05,
+                  border: Border.all(
+                    color: _chatOpen ? K.gold2.withOpacity(0.6) : K.w10,
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      _chatOpen
+                          ? Icons.close_rounded
+                          : Icons.chat_bubble_rounded,
+                      size: 18,
+                      color: _chatOpen ? K.gold2 : K.w40,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _chatOpen ? 'Kapat' : 'Sohbet',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: _chatOpen ? K.gold2 : K.w40,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuestionPanel(
+    Map<String, dynamic> q,
+    List<String> opts,
+    int correctIdx,
+  ) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+      child: Column(
+        children: [
+          GlassBox(
+            borderColor: K.gold2,
+            radius: 20,
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                Text(
+                  'SORU ${_qIdx + 1} / ${_questions.length}',
+                  style: const TextStyle(
+                    color: K.gold2,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 2,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  q['question']?.toString() ?? '',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: K.w100,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w500,
+                    height: 1.6,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          ...List.generate(opts.length, (i) {
+            if (_hiddenOpts.contains(i)) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 9),
+                child: Container(
+                  height: 54,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    color: K.w05,
+                    border: Border.all(color: K.w10, width: 0.5),
+                  ),
+                ),
+              );
+            }
+
+            const letters = ['A', 'B', 'C', 'D'];
+            final isSel = _selected == i;
+            final isCorr = correctIdx == i;
+
+            Color borderCol = K.opts[i];
+            bool glow = false;
+
+            if (_answered) {
+              if (isCorr) {
+                borderCol = K.correct;
+                glow = true;
+              } else if (isSel && !isCorr) {
+                borderCol = K.wrong;
+                glow = true;
+              } else {
+                borderCol = K.opts[i].withOpacity(0.2);
+              }
+            } else if (isSel) {
+              borderCol = K.select;
+              glow = true;
+            }
+
+            final canTap = !_answered && _selected == -1;
+
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 9),
+              child: GestureDetector(
+                onTap: canTap ? () => _onOptionTap(i) : null,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 220),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 13,
+                  ),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    gradient: LinearGradient(
+                      colors:
+                          glow
+                              ? [
+                                borderCol.withOpacity(0.28),
+                                borderCol.withOpacity(0.10),
+                              ]
+                              : [
+                                K.panelMid.withOpacity(0.75),
+                                K.panel.withOpacity(0.65),
+                              ],
+                    ),
+                    border: Border.all(
+                      color:
+                          glow
+                              ? borderCol
+                              : K.opts[i].withOpacity(_answered ? 0.15 : 0.32),
+                      width: glow ? 1.8 : 1,
+                    ),
+                    boxShadow:
+                        glow
+                            ? [
+                              BoxShadow(
+                                color: borderCol.withOpacity(0.4),
+                                blurRadius: 18,
+                              ),
+                            ]
+                            : [],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          color:
+                              glow
+                                  ? borderCol.withOpacity(0.3)
+                                  : K.opts[i].withOpacity(0.14),
+                          border: Border.all(
+                            color:
+                                glow ? borderCol : K.opts[i].withOpacity(0.4),
+                          ),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          letters[i],
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            fontSize: 15,
+                            color:
+                                glow
+                                    ? borderCol
+                                    : K.opts[i].withOpacity(
+                                      _answered ? 0.3 : 0.85,
+                                    ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          opts[i],
+                          style: TextStyle(
+                            color:
+                                _answered
+                                    ? (glow ? K.w100 : K.w40)
+                                    : (isSel ? K.w100 : K.w80),
+                            fontSize: 15,
+                            fontWeight:
+                                glow ? FontWeight.w600 : FontWeight.w400,
+                          ),
+                        ),
+                      ),
+                      if (_answered && isCorr)
+                        const Icon(
+                          Icons.check_circle_rounded,
+                          color: K.correct,
+                          size: 22,
+                        ),
+                      if (_answered && isSel && !isCorr)
+                        const Icon(
+                          Icons.cancel_rounded,
+                          color: K.wrong,
+                          size: 22,
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildChatPanel() {
+    return Column(
+      children: [
+        GestureDetector(
+          onTap: () => setState(() => _chatOpen = false),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [K.gold2.withOpacity(0.18), K.gold4.withOpacity(0.10)],
+              ),
+              border: Border(
+                bottom: BorderSide(color: K.gold2.withOpacity(0.35), width: 1),
+              ),
+            ),
+            child: const Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  size: 13,
+                  color: K.gold2,
+                ),
+                SizedBox(width: 6),
+                Text(
+                  'OYUNA GERİ DÖN',
+                  style: TextStyle(
+                    color: K.gold2,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child:
+              _chatMessages.isEmpty
+                  ? const Center(
+                    child: Text(
+                      'Henüz mesaj yok',
+                      style: TextStyle(color: K.w40, fontSize: 13),
+                    ),
+                  )
+                  : ListView.builder(
+                    controller: _chatScroll,
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _chatMessages.length,
+                    itemBuilder: (_, i) {
+                      final m = _chatMessages[i];
+                      final isMe = m['from'] == 'me';
+                      return Align(
+                        alignment:
+                            isMe ? Alignment.centerRight : Alignment.centerLeft,
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 8,
+                          ),
+                          constraints: const BoxConstraints(maxWidth: 260),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            gradient:
+                                isMe
+                                    ? const LinearGradient(
+                                      colors: [K.cyan, K.violet],
+                                    )
+                                    : null,
+                            color: isMe ? null : K.w10,
+                          ),
+                          child: Column(
+                            crossAxisAlignment:
+                                isMe
+                                    ? CrossAxisAlignment.end
+                                    : CrossAxisAlignment.start,
+                            children: [
+                              if (!isMe)
+                                Text(
+                                  _bot.name,
+                                  style: const TextStyle(
+                                    color: K.w40,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              Text(
+                                m['text'] ?? '',
+                                style: TextStyle(
+                                  color: isMe ? Colors.white : K.w80,
+                                  fontSize: 14,
+                                  height: 1.4,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+        ),
+        Padding(
+          padding: EdgeInsets.only(
+            left: 12,
+            right: 12,
+            bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+            top: 8,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _chatC,
+                  style: const TextStyle(color: K.w100),
+                  maxLength: 80,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: K.w05,
+                    hintText: 'Mesaj yaz...',
+                    hintStyle: const TextStyle(color: K.w40),
+                    counterText: '',
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(14),
+                      borderSide: BorderSide.none,
+                    ),
+                  ),
+                  onSubmitted: _sendMyMessage,
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: () => _sendMyMessage(_chatC.text),
+                child: Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: const LinearGradient(colors: [K.cyan, K.violet]),
+                    boxShadow: [
+                      BoxShadow(color: K.cyan.withOpacity(0.4), blurRadius: 12),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.send_rounded,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: K.panel.withOpacity(0.9),
+        border: const Border(top: BorderSide(color: K.w10, width: 1)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Dot(color: K.gold2, size: 6),
+          const SizedBox(width: 8),
+          Text(
+            'Düello · ${_qIdx + 1}/${_questions.length} soru',
+            style: const TextStyle(
+              color: K.w40,
+              fontSize: 12,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Dot(color: K.cyan, size: 6),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWaiting() => Scaffold(
+    backgroundColor: K.ink,
+    body: Column(
+      children: [
+        Expanded(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const GoldCoin(size: 60),
+                const SizedBox(height: 24),
+                const GoldText(
+                  'DÜELLO BAŞLIYOR',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 3,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Sorular yükleniyor...',
+                  style: TextStyle(color: K.w40, fontSize: 13),
+                ),
+                const SizedBox(height: 20),
+                const SizedBox(
+                  width: 160,
+                  child: LinearProgressIndicator(
+                    backgroundColor: K.w10,
+                    valueColor: AlwaysStoppedAnimation(K.gold2),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const AdBottomBar(),
+      ],
+    ),
+  );
+
+  Widget _buildFinishedWaiting() => Scaffold(
+    backgroundColor: K.ink,
+    body: Column(
+      children: [
+        Expanded(
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const GoldCoin(size: 60),
+                const SizedBox(height: 24),
+                const GoldText(
+                  'SORULARINIZ BİTTİ',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  '${_bot.name} bitirmesi bekleniyor...',
+                  style: const TextStyle(color: K.w40, fontSize: 13),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Skorunuz: $_myScore',
+                  style: const TextStyle(
+                    color: K.gold2,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                const SizedBox(
+                  width: 160,
+                  child: LinearProgressIndicator(
+                    backgroundColor: K.w10,
+                    valueColor: AlwaysStoppedAnimation(K.gold2),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const AdBottomBar(),
+      ],
+    ),
+  );
 }
